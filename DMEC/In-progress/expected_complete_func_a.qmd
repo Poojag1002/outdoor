@@ -1,0 +1,4498 @@
+---
+title: "Expected vs Complete Testing (Group A)"
+date-modified: today
+embed-resources: true
+format: docx
+prefer-html: true
+execute:
+  echo: false
+  warning: false
+tbl-cap-location: top
+toc: true
+toc-depth: 3
+toc-title: "Reports:"
+title-block-banner: true
+fig-asp: 0.618
+fig-width: 6
+fig-align: center
+out-width: "70%"
+---
+
+```{r}
+#| label: library_load
+#| output: false
+
+library(tidyREDCap)
+library(tidyverse)
+library(expss)
+library(knitr)
+library(kableExtra)
+library(consort)
+library(Hmisc)
+library(data.table)
+library(zoo)
+# -----------------------------------------------------------------
+# Can be commented out/removed if this is already installed.
+devtools::install_github("ExeCTU/CT_R_Package",
+                         ref = "main",
+                         auth_token = Sys.getenv("github_token")                 
+                        )
+# -----------------------------------------------------------------
+
+```
+
+```{r}
+#| label: data_load_vars
+### Variables
+
+.data_date <- "2024-02-29"
+
+# Replace with the desired filename, date should be included in filename.
+.scr_name <- paste("Nurture_U_scr_", .data_date, ".RData", sep = "")
+.bb_name <- paste("Nurture_U_bb_", .data_date, ".RData", sep = "")
+.cbt_name <- paste("Nurture_U_cbt_", .data_date, ".RData", sep = "")
+.rw_name <- paste("Nurture_U_rw_", .data_date, ".RData", sep = "")
+# Replace with the desired file path to save in. Ensure the path ends in "/".
+.file_path <- Sys.getenv("nurture_u_data_loc")
+
+```
+
+```{r}
+#| label: scr_load_1
+#| output: false
+
+# This loads screening project data from file.
+#   And then prints the timestamp of the data extraction.
+
+# rm() removes any data currently in memory.
+#   This ensures that no issues involving similar named crfs 
+#   getting merged accidentally.
+rm(list = ls())
+
+# load() loads the project data into memory.
+#   paste() combines the file path and file name into a single string.
+load(paste(.file_path, .scr_name, sep=""))
+
+# 
+paste("Project data extracted at", when, sep = " ")
+rm(when)
+
+# Creates a list of CRFs. This allows for functions to be applied to all CRFs at once if needed.
+.dfs <- Filter(function(x) is(x, "data.frame"), mget(ls())) 
+names(.dfs) <- set_names(ls(all.names = FALSE))
+
+# The following filters out duplicate entries from the CRF data.
+.df_list <- .dfs %>% 
+  lapply(function(x) filter(x,
+                            !(screening_id %in% grep("Dup",
+                                                     screening_id,
+                                                     value = TRUE)))) %>%
+  lapply(function(x) filter(x,
+                            !(screening_id %in% grep("Dev",
+                                                     screening_id,
+                                                     value = TRUE))))
+
+names(.df_list) <- set_names(ls(all.names = FALSE))
+list2env(.df_list,
+         envir = .GlobalEnv)
+
+```
+
+```{r}
+#| label: scr_expected_data_select_and_merge
+
+# Creates a data table with data on crf expectedness for
+#   each participant for screening.
+
+# Selects necessary data from the Introduction CRF.
+.intro_selection <- nurtureu_introduction %>%
+  select("screening_id",
+         "intro_age",
+         "intro_access",
+         "intro_uni_student",
+         ends_with("_complete"))
+
+# Selects necessary data from the first Ineligible CRF.
+.ineli_1_selection <- thank_you_ineligible %>%
+  select("screening_id",
+         "th_ineligible_tstamp",
+         ends_with("_complete"))
+
+# Selects necessary data from the Screening Consent CRF.
+.con_a_selection <- nurture_u_consent_for_screening %>%
+  select("screening_id",
+         contains("con_check"),
+         "con_date",
+         ends_with("_complete"))
+
+# Selects necessary data from the Eligibility CRF.
+.eli_selection <- eligibility %>%
+  select("screening_id",
+         "eli_age",
+         "eli_university",
+         ends_with("_complete"))
+
+# Selects necessary data from the PHQ-9 CRF.
+.phq_selection <- phq9 %>%
+  select("screening_id",
+         "phq_9_total",
+         contains("risk_0"),
+         "phq_09",
+         "phq_help_contact",
+         ends_with("_complete"))
+
+# Selects necessary data from the Risk CRF.
+.risk_selection <- risk_contact %>%
+  select("screening_id",
+         ends_with("_complete"))
+
+# Selects necessary data from the GAD-7 CRF.
+.gad_selection <- gad7 %>%
+  select("screening_id",
+         "gad_7_total",
+         ends_with("_complete"))
+
+# Selects necessary data from the Brooding CRF.
+.brood_selection <- item_brooding_scale %>%
+  select("screening_id",
+         "bro_5_total",
+         ends_with("_complete"))
+
+# Selects necessary data from the PSWQ CRF.
+.pswq_selection <- shortform_penn_state_worry_questionnaire %>%
+  select("screening_id",
+         "pswq_8_total",
+         ends_with("_complete"))
+
+# Selects necessary data from the LIDAS CRF.
+.lidas_selection <- lidas_adapted %>%
+  select(c("screening_id",
+           "lidas_47___h", # Bipolar
+           "lidas_47___i", # Schizophenia or psychosis
+           "lidas_47___j", # Alcohol/substance use disorder
+           "lidas_47___k", # Current treatment for depression/anxiety
+           "lidas_47___l", # Past treatment/diagnosis of depression/anxiety
+           "lidas_47b", # Number of sessions received
+           "lidas_47c", # Number of sessions planned
+           "lidas_47g", # Number of weeks on medication
+           "lidas_meet_past_mde",
+           "lidas_meet_mde",
+           "lidas_excluded",
+           ends_with("complete"))) 
+
+# Selects necessary fields from the Bounce Back consent CRF.
+.con_bb_selection <- consent_for_bounce_back_trial %>%
+  select(c("screening_id",
+           "fea_take_part",
+           ends_with("complete")))
+
+# Selects necessary fields from the Internet CBT consent CRF.
+.con_cbt_selection <- consent_for_internetcbt_trial %>%
+  select(c("screening_id",
+           "acu_take_part",
+           ends_with("complete")))
+
+# Selects necessary fields from the Reducing Worry Consent CRF.
+.con_rw_selection <- consent_for_reduce_worry_trial %>%
+  select(c("screening_id",
+           "rum_take_part",
+           ends_with("complete")))
+
+# Selects necessary data from the Ineligible CRF.
+.ineli_2_selection <- ineligible %>%
+  select("screening_id",
+         ends_with("_complete"))
+
+# Merges necessary data into a single data table.
+.scr_exp_data <- .intro_selection %>%
+  merge(.ineli_1_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.con_a_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.eli_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.phq_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.risk_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.gad_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.brood_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.pswq_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.lidas_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.con_rw_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.con_cbt_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.con_bb_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  merge(.ineli_2_selection,
+        by = "screening_id",
+        all.x = TRUE) %>%
+  setDT()
+
+```
+
+```{r}
+#| label: scr_expected_data_cleaning
+
+# Sets Screening ID as a numeric value - allows data table
+#   to be sorted. 
+.scr_exp_data[,screening_id:=as.numeric(screening_id)]
+# Sorts data table by Screening ID.
+setorder(.scr_exp_data, screening_id)
+# Adds a start date based on the Consent or first ineligible
+#   date, as there is no date field in the first CRF.
+.scr_exp_data[,start_date := pmax(con_date,
+                          th_ineligible_tstamp,
+                          na.rm = TRUE)]
+
+# Fills forward dates, while not perfect this gives a good
+#   enough guess for start dates in screening.
+setnafill(.scr_exp_data, type = "locf", cols = "start_date")
+
+# The first ppt did not have a start date, but the database
+#   a completed timestamp with the same date as the second ppt.
+setnafill(.scr_exp_data, type = "nocb", cols = "start_date")
+
+# Calculates the number of days since the start date.
+.scr_exp_data[, days_since:= difftime(.data_date,
+                                      start_date,
+                                      units = "days")]
+
+
+```
+
+```{r}
+#| label: func_exp_comp_scr
+
+# Function to calculate Expected/Completed/Started/
+#   Overdue numbers
+
+.nurtureu_exp_comp <- function(.data,
+                               .exp,
+                               .crf_name,
+                               .tp_higher) {
+  .crf_data <- .data
+  
+  .exp_data <- .exp
+    
+
+  # Calculates whether crf has been marked as Complete
+  #   or not.
+  .comp_stat <- .crf_data %>%
+    select("screening_id",
+           ends_with("_complete"))
+  
+  # Calculates whether the crf has been started or not.
+  .crf_na_num <- .crf_data %>%
+    select(!c(contains("redcap_"),
+              contains("calc"),
+              contains("crf_ver"),
+              ends_with("_complete"))) %>%
+    mutate(na_per_row = rowSums(is.na(.))) %>%
+    select("screening_id",
+           "na_per_row")
+
+  # Calculates number of fields that should be completed.
+  .num_cols <- .crf_data %>%
+    select(!c("screening_id",
+              contains("redcap_"),
+              contains("calc"),
+              contains("crf_ver"),
+              ends_with("_complete"))) %>%
+    ncol()
+
+  # Renames the column from "*_complete" to comp_stat
+  #   for ease of reference.
+  colnames(.comp_stat)[ncol(.comp_stat)] <- "comp_stat"
+
+  # Calculates the Status of each ppt for
+  #   Started, Overdue and Unobtainable states
+  #   respectively.
+  .comp_stat <- .comp_stat %>%
+    merge(.crf_na_num,
+          by = "screening_id") %>%
+    merge(.exp_data,
+          by = "screening_id",
+          all.y = TRUE) %>%
+    # Checks whether any data has been inputted
+    #   to the CRF.
+    mutate(start_stat = case_when(
+      na_per_row != .num_cols ~ "Started",
+      .default = "Not Started")) %>%
+    # Checks to see if incomplete CRFs are Overdue.
+    mutate(over_stat = case_when(
+      (comp_stat != "Complete" | is.na(comp_stat)) &
+      days_since > .tp_higher ~ "Overdue",
+      .default = "Not Overdue")) %>%
+    # Adds an Unobtainable check.
+    mutate(unob_stat = "Obtainable")
+
+  # Creates a complete list of states for completion.
+  .comp_cats <- data.frame(
+    comp_stat = c("Complete",
+                  "Incomplete",
+                  NA)
+  )
+
+  # Calculates the number (%) of ppts who have been
+  #   marked as complete.
+  .comp_pct <- .comp_stat %>% 
+    group_by(comp_stat) %>%
+    summarise(con_count = n()) %>%
+    merge(.comp_cats,
+          by = "comp_stat",
+          all.y = TRUE) %>%
+    # If there is a state missing replaces NA with 0.
+    replace_na(list(con_count = 0)) %>%
+    # `janitor` is used to calculate and display percentages.
+    janitor::adorn_percentages(denominator = "col") %>%
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns(position = "front")
+
+  # Renames column name.
+  colnames(.comp_pct)[1] <- "status"
+
+  # Selects just the necessary state data.
+  .comp_pct <- .comp_pct[.comp_pct$status == "Complete" &
+                         !is.na(.comp_pct$status),]$con_count
+
+  # Creates a complete list of states for startedness.
+  .start_cats <- data.frame(
+    start_stat = c("Started",
+                  "Not Started",
+                  NA)
+  )
+
+  # Calculates the number (%) of ppts who have been
+  #   marked as started.
+  .start_pct <- .comp_stat %>%
+    group_by(start_stat) %>%
+    summarise(con_count = n()) %>%
+    merge(.start_cats,
+          by = "start_stat",
+          all.y = TRUE) %>%
+    # If there is a state missing replaces NA with 0.
+    replace_na(list(con_count = 0)) %>%
+    # `janitor` is used to calculate and display percentages.
+    janitor::adorn_percentages(denominator = "col") %>%
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns(position = "front")
+
+  # Renames column name.
+  colnames(.start_pct)[1] <- "status"
+
+  # Selects just the necessary state data.
+  .start_pct <- .start_pct[.start_pct$status == "Started" & !is.na(.start_pct$status),]$con_count
+
+  # Creates a complete list of states for overdueness.
+  .over_cats <- data.frame(
+    over_stat = c("Overdue",
+                  "Not Overdue",
+                  NA)
+  )
+
+  # Calculates the number (%) of ppts who have been
+  #   marked as overdue.
+  .over_pct <- .comp_stat %>%
+    group_by(over_stat) %>%
+    summarise(con_count = n()) %>%
+    merge(.over_cats,
+          by = "over_stat",
+          all.y = TRUE) %>%
+    # If there is a state missing replaces NA with 0.
+    replace_na(list(con_count = 0)) %>%
+    # `janitor` is used to calculate and display percentages.
+    janitor::adorn_percentages(denominator = "col") %>%
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns(position = "front")
+
+  # Renames column name.
+  colnames(.over_pct)[1] <- "status"
+
+  # Selects just the necessary state data.
+  .over_pct <- .over_pct[.over_pct$status == "Overdue" & !is.na(.over_pct$status),]$con_count
+
+  # Creates a complete list of states for obtainableness.
+  .unob_cats <- data.frame(
+    unob_stat = c("Unobtainable",
+                  "Not Unobtainable",
+                  NA)
+  )
+  # Calculates the number (%) of ppts who have been
+  #   marked as unobtainable.
+  .unob_pct <- .comp_stat %>%
+    group_by(unob_stat) %>%
+    summarise(con_count = n()) %>%
+    merge(.unob_cats,
+          by = "unob_stat",
+          all.y = TRUE) %>%
+    # If there is a state missing replaces NA with 0.
+    replace_na(list(con_count = 0)) %>%
+    # `janitor` is used to calculate and display percentages.
+    janitor::adorn_percentages(denominator = "col") %>%
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns(position = "front")
+
+  # Renames column name.
+  colnames(.unob_pct)[1] <- "status"
+
+  # Selects just the necessary state data.
+  .unob_pct <- .unob_pct[.unob_pct$status == "Unobtainable" &
+                         !is.na(.unob_pct$status),]$con_count
+
+  # Groups the data into a single dataframe object.
+  .tbl <- data.frame(crf_name = .crf_name,
+                     exp_num = nrow(.exp_data),
+                     start_num = .start_pct,
+                     comp_num = .comp_pct,
+                     over_num = .over_pct,
+                     unob_num = .unob_pct)
+
+  # Returns the dataframe.
+  return(.tbl)
+}
+
+```
+
+```{r}
+#| label: tbl-scr_expected_data
+#| tbl-cap: "Screening data completeness"
+
+rbind(
+  .nurtureu_exp_comp(.data = nurtureu_introduction,
+                     .exp = .scr_exp_data,
+                     .crf_name = "Nurture U Introduction",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = thank_you_ineligible,
+                     .exp = .scr_exp_data[!(intro_age == "Yes" &
+                                            intro_access == "Yes" &
+                                            intro_uni_student == "Yes") #&
+                                          #nurtureu_introduction_complete == "Complete"
+                                          ],
+                     .crf_name = "Thank you - Ineligible",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = nurture_u_consent_for_screening,
+                     .exp = .scr_exp_data[(intro_age == "Yes" &
+                                           intro_access == "Yes" &
+                                           intro_uni_student == "Yes") #&
+                                          #nurtureu_introduction_complete == "Complete"
+                                          ],
+                     .crf_name = "Consent Form A (Screening)",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = eligibility,
+                     .exp = .scr_exp_data[(intro_age == "Yes" &
+                                           intro_access == "Yes" &
+                                           intro_uni_student == "Yes") &
+                                          nurture_u_consent_for_screening_complete == "Complete" &
+                                          !is.na(con_date)],
+                     .crf_name = "Eligibility",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = phq9,
+                     .exp = .scr_exp_data[eli_age >= 16 &
+                                          (intro_age == "Yes" &
+                                           intro_access == "Yes" &
+                                           intro_uni_student == "Yes") &
+                                          eligibility_complete == "Complete" &
+                                          !is.na(con_date)],
+                     .crf_name = "PHQ-9",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = risk_contact,
+                     .exp = .scr_exp_data[(intro_age == "Yes" &
+                                           intro_access == "Yes" &
+                                           intro_uni_student == "Yes") &
+                                          eli_age >= 16 &
+                                          phq9_complete == "Complete" &
+                                          phq_help_contact == "Yes, I would like to contact the team"],
+                     .crf_name = "Risk Contact",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = gad7,
+                     .exp = .scr_exp_data[(intro_age == "Yes" &
+                                           intro_access == "Yes" &
+                                           intro_uni_student == "Yes") &
+                                          eli_age >= 16 &
+                                          #phq9_complete == "Complete" &
+                                          !((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") & risk_02 == "Yes") &
+                                          !((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") & risk_03 == "Yes")],
+                     .crf_name = "GAD-7",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = item_brooding_scale,
+                     .exp = .scr_exp_data[(intro_age == "Yes" &
+                                           intro_access == "Yes" &
+                                           intro_uni_student == "Yes") &
+                                          eli_age >= 16 &
+                                          #gad7_complete == "Complete" &
+                                          !((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") & risk_02 == "Yes") &
+                                          !((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") & risk_03 == "Yes")],
+                     .crf_name = "5-item item brooding scale",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = shortform_penn_state_worry_questionnaire,
+                     .exp = .scr_exp_data[(intro_age == "Yes" &
+                                           intro_access == "Yes" &
+                                           intro_uni_student == "Yes") &
+                                          eli_age >= 16 &
+                                          #item_brooding_scale_complete == "Complete" &
+                                          !((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") & risk_02 == "Yes") &
+                                          !((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") & risk_03 == "Yes")],
+                     .crf_name = "Short-form Penn State Worry Questionnaire",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = lidas_adapted,
+                     .exp = .scr_exp_data[(intro_age == "Yes" &
+                                           intro_access == "Yes" &
+                                           intro_uni_student == "Yes") &
+                                          #shortform_penn_state_worry_questionnaire_complete == "Complete" &
+                                          eli_age >= 16 &
+                                          !((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") & risk_02 == "Yes") &
+                                          !((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") & risk_03 == "Yes")],
+                     .crf_name = "LIDAS Adapted",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = consent_for_reduce_worry_trial,
+                     .exp = .scr_exp_data[phq_9_total < 20 &
+                                          lidas_meet_mde == 0 &
+                                          ((bro_5_total > 10 &
+                                            pswq_8_total > 26) |
+                                           (bro_5_total > 12 & pswq_8_total > 24)) &
+                                          lidas_excluded == 0 &
+                                          lidas_adapted_complete == "Complete"],
+                     .crf_name = "Consent form B (Reducing Worry)",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = consent_for_internetcbt_trial,
+                     .exp = .scr_exp_data[(phq_9_total > 9 |
+                                           lidas_meet_mde == 1 |
+                                           gad_7_total > 9) &
+                                          lidas_excluded == 0 &
+                                          is.na(rum_take_part) &
+                                          lidas_adapted_complete == "Complete"],
+                     .crf_name = "Consent form B (Internet CBT)",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = consent_for_bounce_back_trial,
+                     .exp = .scr_exp_data[phq_9_total <= 9 &
+                                          lidas_meet_mde == 0 & 
+                                          gad_7_total <= 9 &
+                                          lidas_excluded == 0 &
+                                          eli_university == "University of Exeter" &
+                                          is.na(rum_take_part) &
+                                          is.na(acu_take_part) &
+                                          lidas_adapted_complete == "Complete"],
+                     .crf_name = "Consent form B (Bounce Back)",
+                     .tp_higher = 14),
+  .nurtureu_exp_comp(.data = ineligible,
+                     .exp = .scr_exp_data[(eli_age < 16 |
+                                           ((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") &
+                                            risk_02 == "Yes") |
+                                           ((phq_09 == "More than half the days" |
+                                             phq_09 == "Nearly every day") &
+                                            risk_02 == "Yes") |
+                                           lidas_excluded == 1 |
+                                           (eli_university != "University of Exeter" &
+                                            phq_9_total <= 9 &
+                                            gad_7_total <= 9 &
+                                            lidas_meet_mde == 0)) &
+                                          (is.na(rum_take_part) &
+                                           is.na(acu_take_part) &
+                                           is.na(fea_take_part))],
+                     .crf_name = "Ineligible after Screening",
+                     .tp_higher = 14),
+  deparse.level = 1
+) %>%
+  kbl(col.names = c("Form",
+                    "Number expected\u00B9",
+                    "Number started (n(%))\u00B2",
+                    "Number completed (n(%))\u00B3",
+                    "Number overdue (n(%))\u2074",
+                    "Number marked as unobtainable (n(%))\u2075"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c(
+    "Expected is defined as the number of participants who have exceeded the time-point visit window. Participants have 14 days to complete these forms.",
+    "Started is defined as the number of participants that have at least one data field completed.",
+    "Completed is defined as forms that are expected and have been marked as complete.",
+    "Overdue is defined as forms that are expected but have not been marked as complete and have exceeded the timepoint window.",
+    "Unobtainable is defined as forms that will not have data as participants has withdrawn from the study."
+    ),
+              "number")
+
+```
+
+```{r}
+#| label: func_exp_comp_main
+# Function to calculate Expected/Completed/Started/Overdue numbers
+
+.main_exp_comp <- function(.data,
+                          .exp,
+                          .crf_name,
+                          .tp_higher) {
+  .crf_data <- .data
+  
+  .exp_data <- .exp
+
+  # Calculates whether crf has been marked as Complete
+  #   or not.
+  .comp_stat <- .crf_data %>%
+    select("record_id",
+           ends_with("_complete"))
+  
+  # Calculates whether the crf has been started or not.
+  .crf_na_num <- .crf_data %>%
+    select(!c(contains("redcap_"),
+              contains("calc"),
+              contains("crf_ver"),
+              contains("rando_mde_coded"),
+              contains("___"),
+              ends_with("_complete"))) %>%
+    mutate(na_per_row = rowSums(is.na(.))) %>%
+    select("record_id",
+           "na_per_row")
+
+  # Calculates number of fields that should be completed.
+  .num_cols <- .crf_data %>%
+    select(!c("record_id",
+              contains("redcap_"),
+              contains("calc"),
+              contains("rando_mde_coded"),
+              contains("___"),
+              contains("crf_ver"),
+              ends_with("_complete"))) %>%
+    ncol()
+
+  # Renames the column from "*_complete" to comp_stat
+  #   for ease of reference.
+  colnames(.comp_stat)[ncol(.comp_stat)] <- "comp_stat"
+
+  # Calculates the Status of each ppt for
+  #   Started, Overdue and Unobtainable states
+  #   respectively.
+  .comp_stat <- .comp_stat %>%
+    merge(.crf_na_num,
+          by = "record_id") %>%
+    merge(.exp_data,
+          by = "record_id",
+          all.y = TRUE) %>%
+    # Checks whether any data has been inputted
+    #   to the CRF.
+    mutate(start_stat = case_when(
+      na_per_row != .num_cols ~ "Started",
+      .default = "Not Started")) %>%
+    # Checks to see if incomplete CRFs are Overdue.
+    mutate(over_stat = case_when(
+      (comp_stat != "Complete" | is.na(comp_stat)) &
+      days_since > .tp_higher &
+      is.na(with_date) ~ "Overdue",
+      .default = "Not Overdue")) %>%
+    # Adds an Unobtainable check.
+    mutate(unob_stat = case_when(
+      (comp_stat != "Complete" | is.na(comp_stat)) &
+      !is.na(with_date) ~ "Unobtainable",
+      .default = "Obtainable"))
+
+  # Creates a complete list of states for completion.
+  .comp_cats <- data.frame(
+    comp_stat = c("Complete",
+                  "Incomplete",
+                  NA)
+  )
+
+  # Calculates the number (%) of ppts who have been
+  #   marked as complete.
+  .comp_pct <- .comp_stat %>% 
+    group_by(comp_stat) %>%
+    summarise(con_count = n()) %>%
+    merge(.comp_cats,
+          by = "comp_stat",
+          all.y = TRUE) %>%
+    # If there is a state missing replaces NA with 0.
+    replace_na(list(con_count = 0)) %>%
+    # `janitor` is used to calculate and display percentages.
+    janitor::adorn_percentages(denominator = "col") %>%
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns(position = "front")
+
+  # Renames column name.
+  colnames(.comp_pct)[1] <- "status"
+
+  # Selects just the necessary state data.
+  .comp_pct <- .comp_pct[.comp_pct$status == "Complete" &
+                         !is.na(.comp_pct$status),]$con_count
+
+  # Creates a complete list of states for startedness.
+  .start_cats <- data.frame(
+    start_stat = c("Started",
+                  "Not Started",
+                  NA)
+  )
+
+  # Calculates the number (%) of ppts who have been
+  #   marked as started.
+  .start_pct <- .comp_stat %>%
+    group_by(start_stat) %>%
+    summarise(con_count = n()) %>%
+    merge(.start_cats,
+          by = "start_stat",
+          all.y = TRUE) %>%
+    # If there is a state missing replaces NA with 0.
+    replace_na(list(con_count = 0)) %>%
+    # `janitor` is used to calculate and display percentages.
+    janitor::adorn_percentages(denominator = "col") %>%
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns(position = "front")
+
+  # Renames column name.
+  colnames(.start_pct)[1] <- "status"
+
+  # Selects just the necessary state data.
+  .start_pct <- .start_pct[.start_pct$status == "Started" & !is.na(.start_pct$status),]$con_count
+
+  # Creates a complete list of states for overdueness.
+  .over_cats <- data.frame(
+    over_stat = c("Overdue",
+                  "Not Overdue",
+                  NA)
+  )
+
+  # Calculates the number (%) of ppts who have been
+  #   marked as overdue.
+  .over_pct <- .comp_stat %>%
+    group_by(over_stat) %>%
+    summarise(con_count = n()) %>%
+    merge(.over_cats,
+          by = "over_stat",
+          all.y = TRUE) %>%
+    # If there is a state missing replaces NA with 0.
+    replace_na(list(con_count = 0)) %>%
+    # `janitor` is used to calculate and display percentages.
+    janitor::adorn_percentages(denominator = "col") %>%
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns(position = "front")
+
+  # Renames column name.
+  colnames(.over_pct)[1] <- "status"
+
+  # Selects just the necessary state data.
+  .over_pct <- .over_pct[.over_pct$status == "Overdue" & !is.na(.over_pct$status),]$con_count
+
+  # Creates a complete list of states for obtainableness.
+  .unob_cats <- data.frame(
+    unob_stat = c("Unobtainable",
+                  "Obtainable",
+                  NA)
+  )
+  # Calculates the number (%) of ppts who have been
+  #   marked as unobtainable.
+  .unob_pct <- .comp_stat %>%
+    group_by(unob_stat) %>%
+    summarise(con_count = n()) %>%
+    merge(.unob_cats,
+          by = "unob_stat",
+          all.y = TRUE) %>%
+    # If there is a state missing replaces NA with 0.
+    replace_na(list(con_count = 0)) %>%
+    # `janitor` is used to calculate and display percentages.
+    janitor::adorn_percentages(denominator = "col") %>%
+    janitor::adorn_pct_formatting(digits = 1) %>%
+    janitor::adorn_ns(position = "front")
+
+  # Renames column name.
+  colnames(.unob_pct)[1] <- "status"
+
+  # Selects just the necessary state data.
+  .unob_pct <- .unob_pct[.unob_pct$status == "Unobtainable" &
+                         !is.na(.unob_pct$status),]$con_count
+
+  # Groups the data into a single dataframe object.
+  .tbl <- data.frame(crf_name = .crf_name,
+                     exp_num = nrow(.exp_data),
+                     start_num = .start_pct,
+                     comp_num = .comp_pct,
+                     over_num = .over_pct,
+                     unob_num = .unob_pct)
+
+  # Returns the dataframe.
+  return(.tbl)
+}
+
+```
+
+## Reducing Worry
+
+```{r}
+#| label: rw_load_1
+#| output: false
+
+# This loads Reducing Worry project data from file.
+#   And then prints the timestamp of the data extraction.
+
+# rm() removes any data currently in memory.
+#   This ensures that no issues involving similar named crfs 
+#   getting merged accidentally.
+rm(list = ls())
+
+# load() loads the project data into memory.
+#   paste() combines the file path and file name into a single string.
+load(paste(.file_path,
+           .rw_name,
+           sep=""))
+
+# 
+paste("Project data extracted at",
+      when,
+      sep = " ")
+rm(when)
+
+# Creates a list of CRFs. This allows for functions to be applied to all CRFs at once if needed.
+.dfs <- Filter(function(x) is(x, "data.frame"), mget(ls())) 
+names(.dfs) <- set_names(ls(all.names = FALSE))
+
+# The following filters out duplicate entries from the CRF data.
+.df_list <- .dfs %>% 
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dup",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dev",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  sapply(function(x) mutate(x,
+                            record_id = str_split_i(x$record_id,
+                                                  pattern = "_",
+                                                  i = 2))) 
+
+names(.df_list) <- set_names(ls(all.names = FALSE))
+list2env(.df_list,
+         envir = .GlobalEnv)
+
+# Selects necessary fields from Randomisation CRF.
+.rand_selection <- randomisation %>%
+  filter(redcap_event_name == "Baseline") %>%
+  filter(rando_allocation == "Usual care") %>%
+  select(c("record_id"))
+
+.dfs <- lapply(.df_list, function(x) x[x$record_id %in% .rand_selection[[1]],])
+names(.dfs) <- set_names(ls(all.names = FALSE))
+list2env(.dfs, envir = .GlobalEnv)
+
+```
+
+### Baseline
+
+```{r}
+#| label: rw_baseline_expected_data_select_and_merge
+
+# Selects necessary fields from Contact Details CRF.
+.contact_selection <- contact_details %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "screening_id",
+           "cont_timestamp",
+           ends_with("_complete")))
+
+# Selects necessary fields from Demographics CRF.
+.demo_selection <- demographics %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WEMWBS CRF.
+.wemwbs_selection <- wemwbs %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WSAS CRF.
+.wsas_selection <- wsas %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Brief Resilience
+#   Scale CRF.
+.brs_selection <- brief_resilience_scale %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Academic grades
+#   self-report CRF.
+.ac_grades_selection <- academic_grades_selfreport %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Perceived stress
+#   Scale CRF.
+.stress_selection <- perceived_stress_scale %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from PSSI CRF.
+.pssi_selection <- pssi %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Negative Experience
+#   measure scale CRF.
+.neg_exp_selection <- negative_experience_measure %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Use of services/
+#   treatment received-incorporating NHS CRF.
+.use_of_nhs_selection <- use_of_services_treatment_received_nhs %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Randomisation CRF.
+.randomisation_selection <- randomisation %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "rando_allocation",
+           "rando_dt",
+           ends_with("_complete")))
+
+# Selects necessary fields from Imported fields CRF.
+.import_selection <- imported_fields %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+.cos_selection <- withdrawal %>%
+  filter(redcap_event_name == "Unscheduled Event") %>%
+  filter(is.na(redcap_repeat_instrument)) %>%
+  filter(!is.na(with_rum_ch_dt)) %>%
+  filter(with_rum_type == "Withdraw from the trial completely (including all assessments)") %>%
+  select(c("record_id",
+           "with_rum_ch_dt",
+           "withdrawal_complete"))
+
+colnames(.cos_selection)[2] <- "with_date"
+
+# Merge necessary data into a single data table.
+.baseline_exp_data_rw <- .contact_selection %>%
+  merge(.demo_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wemwbs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wsas_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.brs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.ac_grades_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.stress_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pssi_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.neg_exp_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.use_of_nhs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.import_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.cos_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+```
+
+```{r}
+#| label: rw_baseline_expected_data_cleaning
+
+# Sets IDs as numeric rather than characters.
+.baseline_exp_data_rw[,screening_id := as.numeric(screening_id)]
+.baseline_exp_data_rw[,record_id := as.numeric(record_id)]
+
+# Calculates the number of days since the start date.
+.baseline_exp_data_rw[, days_since:= difftime(.data_date,
+                                               cont_timestamp,
+                                               units = "days")]
+
+.baseline_exp_data_rw[!is.na(with_date)][, days_since:= difftime(with_date,
+                                               cont_timestamp,
+                                               units = "days")]
+
+
+```
+
+```{r}
+#| label: tbl-rw_baseline_expected_data
+#| tbl-cap: "Reducing Worry Baseline data completeness"
+
+rbind(
+  .main_exp_comp(.data = filter(contact_details,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "Contact Details",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(demographics,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "Demographics",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(wemwbs,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "WEMWBS",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(wsas,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "WSAS",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(brief_resilience_scale,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "Brief Resilience Scale",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(academic_grades_selfreport,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "Academic grades self-report",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(perceived_stress_scale,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "Perceived Stress Scale",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(pssi,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "PSSI",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(negative_experience_measure,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "Negative Experience measure",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(use_of_services_treatment_received_nhs,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "Use of Services (NHS)",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(randomisation,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_rw,
+                .crf_name = "Randomisation",
+                .tp_higher = 15),
+  deparse.level = 1
+) %>%
+  kbl(col.names = c("Form",
+                    "Number expected\u00B9",
+                    "Number started (n(%))\u00B2",
+                    "Number completed (n(%))\u00B3",
+                    "Number overdue (n(%))\u2074",
+                    "Number marked as unobtainable (n(%))\u2075"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c(
+    "Expected is defined as the number of participants who have exceeded the time-point visit window. Participants have 14 days to complete these forms.",
+    "Started is defined as the number of participants that have at least one data field completed.",
+    "Completed is defined as forms that are expected and have been marked as complete.",
+    "Overdue is defined as forms that are expected but have not been marked as complete and have exceeded the timepoint window.",
+    "Unobtainable is defined as forms that will not have data as participants has withdrawn from the study."
+    ),
+              "number")
+
+```
+
+### Weekly Mediator Assessments
+
+```{r}
+#| label: rw_week_expected_data_select_and_merge
+
+# Selects necessary fields from PHQ-2/GAD-2 CRF.
+.phq_gad_selection <- phq2_gad2 %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Stress CRF.
+.stress_selection <- stress %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Use of cognitive and
+#   behavioural skills CRF.
+.cognitive_selection <- use_of_cognitive_and_behavioural_skills %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Change in habit
+#   applied to worry CRF.
+.change_worry_selection <- change_in_habit_applied_to_worry_61f68e %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Change in habit
+#   applied to problem-solving CRF.
+.change_problem_selection <- change_in_habit_applied_to_problemsolving %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Self-Compassion
+#   Scale-Short Form CRF.
+.self_compassion_selection <- selfcompassion_scaleshort_form %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Brooding Scale-2
+#   Items CRF.
+.brood_2_selection <- brooding_scale2_items %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from 
+#   Self-efficacy/Mastery CRF.
+.self_mastery_selection <- selfefficacymastery %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Problem
+#   clarification CRF.
+.clarification_selection <- problem_clarification_819b84 %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+.randomisation_selection_week <- .randomisation_selection %>%
+  mutate(redcap_event_name = NA)
+
+.cos_selection_week <- .cos_selection %>%
+  mutate(redcap_event_name = NA)
+
+# Merge necessary data into single data table
+.fu_week_exp_data_rw <- .phq_gad_selection %>%
+  merge(.randomisation_selection_week,
+        by = c("record_id",
+               "redcap_event_name"),
+        all = TRUE) %>%
+  merge(.stress_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>%
+  merge(.cognitive_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.change_worry_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.change_problem_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.self_compassion_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.brood_2_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.self_mastery_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>%  
+  merge(.clarification_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.cos_selection_week,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>%
+  setDT()      
+
+```
+
+```{r}
+#| label: rw_week_expected_data_cleaning
+
+# Ensures there is a row for each ID at each timepoint.
+.index <- CJ(record_id = unique(.fu_week_exp_data_rw$record_id),
+             redcap_event_name = unique(.fu_week_exp_data_rw$redcap_event_name))
+.fu_week_exp_data_rw <-merge(.fu_week_exp_data_rw,
+                              .index,
+                              by=c("record_id",
+                                   "redcap_event_name"),
+                              all=TRUE)
+
+# Sets IDs as numeric rather than characters.
+.fu_week_exp_data_rw[,record_id := as.numeric(record_id)]
+
+
+# Calculates the number of days since the start date.
+.fu_week_exp_data_rw[, days_since:= difftime(.data_date,
+                                             rando_dt,
+                                             units = "days")]
+
+.fu_week_exp_data_rw[!is.na(with_date)][, days_since:= difftime(with_date,
+                                                                rando_dt,
+                                                                units = "days")] 
+
+.fu_week_exp_data_rw[!is.na(rando_dt)][, days_since:= as.difftime(-1,
+                                                                  units = "days")] 
+
+# Ensures each row has a value for necessary variables.
+.fu_week_exp_data_rw[,`:=`(rando_dt = na.locf(rando_dt),
+                           days_since = na.locf(days_since),
+                           with_date = na.locf(with_date)),
+                      by=record_id]
+
+```
+
+```{r}
+#| label: tbl-rw_week_fu_exp_data
+#| tbl-cap: "Internet rw 3 Month Follow Up data completeness"
+
+.week_num <- "Week 1 FU"
+.days <- 0
+.tp <- 18
+
+.rw_week_1_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 2 FU"
+.days <- 18
+.tp <- 25
+
+.rw_week_2_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 3 FU"
+.days <- 25
+.tp <- 32
+
+.rw_week_3_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 4 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.rw_week_4_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 5 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.rw_week_5_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 6 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.rw_week_6_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 7 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.rw_week_7_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 8 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.rw_week_8_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_rw[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+rbind(.rw_week_1_exp_tbl,
+      .rw_week_2_exp_tbl,
+      .rw_week_3_exp_tbl,
+      .rw_week_4_exp_tbl,
+      .rw_week_5_exp_tbl,
+      .rw_week_6_exp_tbl,
+      .rw_week_7_exp_tbl,
+      .rw_week_8_exp_tbl,
+      deparse.level = 1) %>%
+  kbl(col.names = c("Form",
+                    "Number expected\u00B9",
+                    "Number started (n(%))\u00B2",
+                    "Number completed (n(%))\u00B3",
+                    "Number overdue (n(%))\u2074",
+                    "Number marked as unobtainable (n(%))\u2075"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c(
+    "Expected is defined as the number of participants who have exceeded the time-point visit window. Participants have 7 days to complete these forms.",
+    "Started is defined as the number of participants that have at least one data field completed.",
+    "Completed is defined as forms that are expected and have been marked as complete.",
+    "Overdue is defined as forms that are expected but have not been marked as complete and have exceeded the timepoint window.",
+    "Unobtainable is defined as forms that will not have data as participants has withdrawn from the study."
+    ),
+              "number") %>%
+  pack_rows("Week 1",
+            1,
+            nrow(.rw_week_1_exp_tbl)) %>%
+  pack_rows("Week 2",
+            nrow(.rw_week_1_exp_tbl) + 1,
+            2 * nrow(.rw_week_1_exp_tbl)) %>%
+  pack_rows("Week 3",
+            2 * nrow(.rw_week_1_exp_tbl) + 1,
+            3 * nrow(.rw_week_1_exp_tbl)) %>%
+  pack_rows("Week 4",
+            3 * nrow(.rw_week_1_exp_tbl) + 1,
+            4 * nrow(.rw_week_1_exp_tbl)) %>%
+  pack_rows("Week 5",
+            4 * nrow(.rw_week_1_exp_tbl) + 1,
+            5 * nrow(.rw_week_1_exp_tbl)) %>%
+  pack_rows("Week 6",
+            5 * nrow(.rw_week_1_exp_tbl) + 1,
+            6 * nrow(.rw_week_1_exp_tbl)) %>%
+  pack_rows("Week 7",
+            6 * nrow(.rw_week_1_exp_tbl) + 1,
+            7 * nrow(.rw_week_1_exp_tbl)) %>%
+  pack_rows("Week 8",
+            7 * nrow(.rw_week_1_exp_tbl) + 1,
+            8 * nrow(.rw_week_1_exp_tbl))
+```
+
+### 3 Months
+
+```{r}
+#| label: rw_3_month_expected_data_select_and_merge
+
+# Selects necessary fields from LIDAS CRF.
+.lidas_selection <- lidas_adapted_3_month_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from PHQ-9 FU CRF.
+.phq_selection <- phq9_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           "phq_flo_help_contact",
+           ends_with("_complete")))
+
+# Selects necessary fields from Risk Contact FU CRF.
+.risk_contact_selection <- risk_contact_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from GAD-7 FU CRF.
+.gad_selection <- gad7_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from 5-item brooding scale
+#   FU CRF.
+.brood_selection <- item_brooding_scale_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Short-form Penn State
+#   Worry Questionnaires CRF.
+.pswq_selection <- shortform_penn_state_worry_questionnaires_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WEMWBS CRF.
+.wemwbs_selection <- wemwbs %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WSAS CRF.
+.wsas_selection <- wsas %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Brief resilience scale CRF.
+.brs_selection <- brief_resilience_scale %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Academic grades
+#   self-report CRF.
+.ac_grades_selection <- academic_grades_selfreport %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Perceived Stress
+#   Scale CRF.
+.pss_selection <- perceived_stress_scale %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from PSSI CRF.
+.pssi_selection <- pssi %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Negative Experience
+#   measure CRF.
+.neg_exp_selection <- negative_experience_measure %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Use of services/
+#   treatment received-incorporating NHS CRF.
+.use_of_nhs_selection <- use_of_services_treatment_received_nhs %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+.fu_3_month_exp_data_rw <- .lidas_selection %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.y = TRUE) %>%
+  merge(.phq_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.risk_contact_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.gad_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.brood_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pswq_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wemwbs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wsas_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.brs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.ac_grades_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pss_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pssi_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.neg_exp_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.use_of_nhs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.cos_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+
+```
+
+```{r}
+#| label: rw_3_month_fu_expected_data_cleaning
+
+# Sets IDs as numeric rather than character.
+.fu_3_month_exp_data_rw[,record_id := as.numeric(record_id)]
+
+
+# Calculates the number of days since the start date.
+.fu_3_month_exp_data_rw[, days_since:= difftime(.data_date,
+                                                 rando_dt,
+                                                 units = "days")]
+
+.fu_3_month_exp_data_rw[!is.na(with_date)][, days_since:= difftime(with_date,
+                                                                   rando_dt,
+                                                                   units = "days")] 
+
+.fu_3_month_exp_data_rw[!is.na(rando_dt)][, days_since:= as.difftime(-1,
+                                                                     units = "days")] 
+
+
+```
+
+```{r}
+#| label: tbl-rw_3_month_fu_exp_data
+#| tbl-cap: "Reducing Worry 3 Month Follow Up data completeness"
+rbind(
+  .main_exp_comp(.data = filter(lidas_adapted_3_month_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90],
+                .crf_name = "LIDAS",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(phq9_fu,
+                                redcap_event_name == "3m Followup"),
+                 .exp = .fu_3_month_exp_data_rw[days_since >= 90],
+                 .crf_name = "PHQ-9",
+                 .tp_higher = 105),
+  .main_exp_comp(.data = filter(risk_contact_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 &
+                                               phq_flo_help_contact == "Yes, I would like to contact the team" #&
+                                                #phq9_fu_complete == "Complete"
+                                                ],
+                .crf_name = "Risk Contact - Follow Up",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(gad7_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #phq9_fu_complete == "Complete"
+                                                ],
+                .crf_name = "GAD-7",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(item_brooding_scale_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #gad7_fu_complete == "Complete"
+                                                ],
+                .crf_name = "5-item Brooding scale",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(shortform_penn_state_worry_questionnaires_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #item_brooding_scale_fu_complete == "Complete"
+                                                ],
+                .crf_name = "Short-form Penn State Worry Questionnaire",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(wemwbs,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #shortform_penn_state_worry_questionnaires_fu_complete == "Complete"
+                                                ],
+                .crf_name = "WEMWBS",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(wsas,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #negative_experience_measure_complete == "Complete"
+                                                ],
+                .crf_name = "WSAS",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(brief_resilience_scale,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #wsas_complete == "Complete"
+                                                ],
+                .crf_name = "Brief Resilience Scale",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(academic_grades_selfreport,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #brief_resilience_scale_complete == "Complete"
+                                                ],
+                .crf_name = "Academic grades self-report",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(perceived_stress_scale,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #wemwbs_complete == "Complete"
+                                                ],
+                .crf_name = "Perceived stress scale",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(pssi,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #perceived_stress_scale_complete == "Complete"
+                                                ],
+                .crf_name = "PSSI",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(negative_experience_measure,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #pssi_complete == "Complete"
+                                                ],
+                .crf_name = "Negative Experience measure",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(use_of_services_treatment_received_nhs,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_rw[days_since >= 90 #&
+                                                #academic_grades_selfreport_complete == "Complete"
+                                                ],
+                .crf_name = "Use of services (NHS)",
+                .tp_higher = 105),
+  deparse.level = 1
+) %>%
+  kbl(col.names = c("Form",
+                    "Number expected\u00B9",
+                    "Number started (n(%))\u00B2",
+                    "Number completed (n(%))\u00B3",
+                    "Number overdue (n(%))\u2074",
+                    "Number marked as unobtainable (n(%))\u2075"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c(
+    "Expected is defined as the number of participants who have exceeded the time-point visit window. Participants have 14 days to complete these forms.",
+    "Started is defined as the number of participants that have at least one data field completed.",
+    "Completed is defined as forms that are expected and have been marked as complete.",
+    "Overdue is defined as forms that are expected but have not been marked as complete and have exceeded the timepoint window.",
+    "Unobtainable is defined as forms that will not have data as participants has withdrawn from the study."
+    ),
+              "number")
+
+```
+
+### 12 Months
+
+```{r}
+#| label: rw_12_month_expected_data_select_and_merge
+
+# Selects necessary fields from LIDAS CRF.
+.lidas_selection <- lidas_adapted_12_month_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from PHQ-9 FU CRF.
+.phq_selection <- phq9_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           "phq_flo_help_contact",
+           ends_with("_complete")))
+
+# Selects necessary fields from Risk Contact FU CRF.
+.risk_contact_selection <- risk_contact_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from GAD-7 FU CRF.
+.gad_selection <- gad7_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from 5-item brooding scale
+#   FU CRF.
+.brood_selection <- item_brooding_scale_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Short-form Penn State
+#   Worry Questionnaires CRF.
+.pswq_selection <- shortform_penn_state_worry_questionnaires_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WEMWBS CRF.
+.wemwbs_selection <- wemwbs %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WSAS CRF.
+.wsas_selection <- wsas %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Brief resilience scale CRF.
+.brs_selection <- brief_resilience_scale %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Academic grades
+#   self-report CRF.
+.ac_grades_selection <- academic_grades_selfreport_12_month_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Perceived Stress
+#   Scale CRF.
+.pss_selection <- perceived_stress_scale %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from PSSI CRF.
+.pssi_selection <- pssi_12_month_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Negative Experience
+#   measure CRF.
+.neg_exp_selection <- negative_experience_measure_12_month_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Use of services/
+#   treatment received-incorporating NHS CRF.
+.use_of_nhs_selection <- use_of_services_treatment_received_nhs_12_month_fu %>%
+  filter(redcap_event_name == "12m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+.fu_12_month_exp_data_rw <- .lidas_selection %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.y = TRUE) %>%
+  merge(.phq_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.risk_contact_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.gad_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.brood_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pswq_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wemwbs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wsas_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.brs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.ac_grades_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pss_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pssi_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.neg_exp_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.use_of_nhs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.cos_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+
+```
+
+```{r}
+#| label: rw_12_month_fu_expected_data_cleaning
+
+# Sets IDs as numeric rather than character.
+.fu_12_month_exp_data_rw[,record_id := as.numeric(record_id)]
+
+
+# Calculates the number of days since the start date.
+.fu_12_month_exp_data_rw[, days_since:= difftime(.data_date,
+                                                 rando_dt,
+                                                 units = "days")]
+
+.fu_12_month_exp_data_rw[!is.na(with_date)][, days_since:= difftime(with_date,
+                                                                   rando_dt,
+                                                                   units = "days")] 
+
+.fu_12_month_exp_data_rw[!is.na(rando_dt)][, days_since:= as.difftime(-1,
+                                                                     units = "days")] 
+
+```
+
+```{r}
+#| label: tbl-rw_12_month_fu_exp_data
+#| tbl-cap: "Reducing Worry 12 Month Follow Up data completeness"
+rbind(
+  .main_exp_comp(.data = filter(lidas_adapted_12_month_fu,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365],
+                .crf_name = "LIDAS",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(phq9_fu,
+                                redcap_event_name == "12m Followup"),
+                 .exp = .fu_12_month_exp_data_rw[days_since >= 365],
+                 .crf_name = "PHQ-9",
+                 .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(risk_contact_fu,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 &
+                                               phq_flo_help_contact == "Yes, I would like to contact the team" #&
+                                                #phq9_fu_complete == "Complete"
+                                                ],
+                .crf_name = "Risk Contact - Follow Up",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(gad7_fu,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #phq9_fu_complete == "Complete"
+                                                ],
+                .crf_name = "GAD-7",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(item_brooding_scale_fu,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #gad7_fu_complete == "Complete"
+                                                ],
+                .crf_name = "5-item Brooding scale",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(shortform_penn_state_worry_questionnaires_fu,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #item_brooding_scale_fu_complete == "Complete"
+                                                ],
+                .crf_name = "Short-form Penn State Worry Questionnaire",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(wemwbs,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #shortform_penn_state_worry_questionnaires_fu_complete == "Complete"
+                                                ],
+                .crf_name = "WEMWBS",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(wsas,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #negative_experience_measure_complete == "Complete"
+                                                ],
+                .crf_name = "WSAS",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(brief_resilience_scale,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #wsas_complete == "Complete"
+                                                ],
+                .crf_name = "Brief Resilience Scale",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(academic_grades_selfreport_12_month_fu,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #brief_resilience_scale_complete == "Complete"
+                                                ],
+                .crf_name = "Academic grades self-report",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(perceived_stress_scale,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #wemwbs_complete == "Complete"
+                                                ],
+                .crf_name = "Perceived stress scale",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(pssi_12_month_fu,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #perceived_stress_scale_complete == "Complete"
+                                                ],
+                .crf_name = "PSSI",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(negative_experience_measure_12_month_fu,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #pssi_complete == "Complete"
+                                                ],
+                .crf_name = "Negative Experience measure",
+                .tp_higher = 365 + 14),
+  .main_exp_comp(.data = filter(use_of_services_treatment_received_nhs_12_month_fu,
+                               redcap_event_name == "12m Followup"),
+                .exp = .fu_12_month_exp_data_rw[days_since >= 365 #&
+                                                #academic_grades_selfreport_complete == "Complete"
+                                                ],
+                .crf_name = "Use of services (NHS)",
+                .tp_higher = 365 + 14),
+  deparse.level = 1
+) %>%
+  kbl(col.names = c("Form",
+                    "Number expected\u00B9",
+                    "Number started (n(%))\u00B2",
+                    "Number completed (n(%))\u00B3",
+                    "Number overdue (n(%))\u2074",
+                    "Number marked as unobtainable (n(%))\u2075"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c(
+    "Expected is defined as the number of participants who have exceeded the time-point visit window. Participants have 14 days to complete these forms.",
+    "Started is defined as the number of participants that have at least one data field completed.",
+    "Completed is defined as forms that are expected and have been marked as complete.",
+    "Overdue is defined as forms that are expected but have not been marked as complete and have exceeded the timepoint window.",
+    "Unobtainable is defined as forms that will not have data as participants has withdrawn from the study."
+    ),
+              "number")
+
+```
+
+## Internet CBT
+
+```{r}
+#| label: cbt_load_1
+#| output: false
+
+# This loads Internet CBT project data from file.
+#   And then prints the timestamp of the data extraction.
+
+# rm() removes any data currently in memory.
+#   This ensures that no issues involving similar named crfs 
+#   getting merged accidentally.
+rm(list = ls())
+
+# load() loads the project data into memory.
+#   paste() combines the file path and file name into a single string.
+load(paste(.file_path,
+           .cbt_name,
+           sep=""))
+
+# 
+paste("Project data extracted at",
+      when,
+      sep = " ")
+rm(when)
+
+# Creates a list of CRFs. This allows for functions to be applied to all CRFs at once if needed.
+.dfs <- Filter(function(x) is(x, "data.frame"), mget(ls())) 
+names(.dfs) <- set_names(ls(all.names = FALSE))
+
+# The following filters out duplicate entries from the CRF data.
+.df_list <- .dfs %>% 
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dup",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dev",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("NA_197",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  sapply(function(x) mutate(x,
+                            record_id = str_split_i(x$record_id,
+                                                  pattern = "_",
+                                                  i = 2))) 
+
+names(.df_list) <- set_names(ls(all.names = FALSE))
+list2env(.df_list,
+         envir = .GlobalEnv)
+
+# Selects necessary fields from Randomisation CRF.
+.rand_selection <- randomisation %>%
+  filter(redcap_event_name == "Baseline") %>%
+  filter(rando_allocation == "Guided online CBT") %>%
+  select(c("record_id"))
+
+.dfs <- lapply(.df_list, function(x) x[x$record_id %in% .rand_selection[[1]],])
+names(.dfs) <- set_names(ls(all.names = FALSE))
+list2env(.dfs, envir = .GlobalEnv)
+
+```
+
+
+### Baseline
+
+```{r}
+#| label: cbt_baseline_expected_data_select_and_merge
+
+# Selects necessary fields from Contact Details CRF.
+.contact_selection <- contact_details %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "screening_id",
+           "cont_timestamp",
+           ends_with("_complete")))
+
+# Selects necessary fields from Demographics CRF.
+.demo_selection <- demographics %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Childhood experience
+#   of Care and Abuse CRF.
+.childhood_selection <- childhood_experience_of_care_and_abuse %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WEMWBS CRF.
+.wemwbs_selection <- wemwbs %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Perceived stress
+#   Scale CRF.
+.stress_selection <- perceived_stress_scale %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from PSSI CRF.
+.pssi_selection <- pssi %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Negative Experience
+#   measure scale CRF.
+.neg_exp_selection <- negative_experience_measure %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WSAS CRF.
+.wsas_selection <- wsas %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Brief Resilience
+#   Scale CRF.
+.brs_selection <- brief_resilience_scale %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Academic grades
+#   self-report CRF.
+.ac_grades_selection <- academic_grades_selfreport %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Use of services/
+#   treatment received-incorporating NHS and student
+#   services CRF.
+.use_of_nhs_selection <- use_of_services_treatment_receivedincorporating_nh %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Physical health and
+#   lifestyle questions CRF.
+.phy_health_selection <- physical_health_and_lifestyle_questions %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from CIDI-SC CRF.
+.cidisc_selection <- cidisc %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Suicidality CRF.
+.suicidality_selection <- suicidality %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "suic_help_contact",
+           ends_with("_complete")))
+
+# Selects necessary fields from Risk Contact-baseline CRF.
+.risk_contact_selection <- risk_contactbaseline %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from AUDIT CRF.
+.audit_selection <- audit %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Substance Abuse CRF.
+.sub_abuse_selection <- substance_abuse %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from SCI Sleep Condition
+#   Indicator CRF.
+.sci_sleep_selection <- sci_sleep_condition_indicator %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from UCLA Loneliness Scale
+#   4-item CRF.
+.ucla_loneliness_selection <- ucla_loneliness_scale_4item %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Social support and social
+#   competence CRF.
+.social_selection <- social_support_and_social_competence %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Personality Measures CRF.
+.personality_selection <- personality_measures %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Rosenberg Self Esteem CRF.
+.self_esteem_selection <- rosenberg_self_esteem %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Brief measure of
+#   hopelessness CRF.
+.brief_hopelessness_selection <- brief_measure_of_hopelessness %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+
+# Selects necessary fields from Relationship Questionnaire CRF.
+.relationship_selection <- relationship_questionnaire %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from PROMISs Applied Cognition -
+#   Abilities scale CRF.
+.promiss_selection <- promiss_applied_cognition_abilities_scale %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Motivation to change CRF.
+.motivation_selection <- motivation_to_change %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Self-Control CRF.
+.self_control_selection <- selfcontrol %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Therapy preference
+#   and expectancy CRF.
+.therapy_pref_selection <- therapy_preference_and_expectancy %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from APOI CRF.
+.apoi_selection <- apoi %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Problem description CRF.
+.prob_description_selection <- problem_description %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Therapy expectation CRF.
+.therapy_exp_selection <- therapy_expectation %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Problem-solving skills CRF.
+.problem_solving_selection <- problemsolving_skills %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Randomisation CRF.
+.randomisation_selection <- randomisation %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "rando_allocation",
+           "rando_dt",
+           ends_with("_complete")))
+
+# Selects necessary fields from Imported fields CRF.
+.import_selection <- imported_fields %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+.cos_selection <- withdrawal %>%
+  filter(redcap_event_name == "Unschedule Event") %>%
+  filter(is.na(redcap_repeat_instrument)) %>%
+  filter(!is.na(with_acu_ch_dt)) %>%
+  filter(with_acu_type == "Withdraw from the trial completely (including all assessments)") %>%
+  select(c("record_id",
+           "with_acu_ch_dt",
+           "withdrawal_complete"))
+
+colnames(.cos_selection)[2] <- "with_date"
+
+.baseline_exp_data_cbt <- .contact_selection %>%
+  merge(.demo_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.childhood_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wemwbs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pssi_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.neg_exp_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.stress_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wsas_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.brs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.ac_grades_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.use_of_nhs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.phy_health_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.cidisc_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.suicidality_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.risk_contact_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.audit_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.sub_abuse_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.sci_sleep_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.ucla_loneliness_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.social_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.personality_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.self_esteem_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.brief_hopelessness_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.relationship_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.promiss_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.motivation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.self_control_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.therapy_pref_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.apoi_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.prob_description_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.therapy_exp_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.problem_solving_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.import_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.cos_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+```
+
+```{r}
+#| label: cbt_baseline_expected_data_cleaning
+
+# Sets IDs as numeric rather than characters.
+.baseline_exp_data_cbt[,screening_id := as.numeric(screening_id)]
+.baseline_exp_data_cbt[,record_id := as.numeric(record_id)]
+
+# Calculates the number of days since the start date.
+.baseline_exp_data_cbt[, days_since:= difftime(.data_date,
+                                               cont_timestamp,
+                                               units = "days")]
+
+.baseline_exp_data_cbt[!is.na(with_date)][, days_since:= difftime(with_date,
+                                                                  cont_timestamp,
+                                                                  units = "days")] 
+
+```
+
+```{r}
+#| label: tbl-cbt_baseline_expected_data
+#| tbl-cap: "Internet CBT Baseline data completeness"
+
+rbind(
+  .main_exp_comp(.data = filter(contact_details,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Contact Details",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(demographics,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Demographics",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(childhood_experience_of_care_and_abuse,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Childhood Experience of Care and Abuse",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(wemwbs,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "WEMWBS",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(perceived_stress_scale,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Perceived Stress Scale",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(pssi,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "PSSI",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(negative_experience_measure,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Negative Experience measure",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(wsas,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "WSAS",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(brief_resilience_scale,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Brief Resilience Scale",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(academic_grades_selfreport,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Academic grades self-report",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(use_of_services_treatment_receivedincorporating_nh,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Use of Services (NHS/Student services)",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(physical_health_and_lifestyle_questions,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Physical health and lifestyle questions",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(cidisc,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "CIDI-SC",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(suicidality,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Suicidality",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(risk_contactbaseline,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt[suicidality_complete == "Complete" &
+                                              suic_help_contact == "Yes, I would like to contact the team"],
+                .crf_name = "Risk Contact - Baseline",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(audit,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "AUDIT",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(substance_abuse,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Substance Abuse",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(sci_sleep_condition_indicator,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "SCI Sleep Condition Indicator",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(ucla_loneliness_scale_4item,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "UCLA Loneliness Scale 4-item",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(social_support_and_social_competence,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Social support and social competence",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(personality_measures,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Personality measures",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(rosenberg_self_esteem,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Rosenberg Self Esteem",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(brief_measure_of_hopelessness,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Brief measure of hopelessness",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(relationship_questionnaire,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Relationship Questionnaire",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(promiss_applied_cognition_abilities_scale,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "PROMISs Applied Cognition - Abilities scale",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(motivation_to_change,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Motivation to Change",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(selfcontrol,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Self-Control",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(therapy_preference_and_expectancy,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Therapy preference and expectancy",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(apoi,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "APOI",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(problem_description,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Problem Description",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(therapy_expectation,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Therapy Expectation",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(problemsolving_skills,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Problem-solving Skills",
+                .tp_higher = 15),
+  .main_exp_comp(.data = filter(randomisation,
+                               redcap_event_name == "Baseline"),
+                .exp = .baseline_exp_data_cbt,
+                .crf_name = "Randomisation",
+                .tp_higher = 15),
+  deparse.level = 1
+) %>%
+  kbl(col.names = c("Form",
+                    "Number expected\u00B9",
+                    "Number started (n(%))\u00B2",
+                    "Number completed (n(%))\u00B3",
+                    "Number overdue (n(%))\u2074",
+                    "Number marked as unobtainable (n(%))\u2075"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c(
+    "Expected is defined as the number of participants who have exceeded the time-point visit window. Participants have 14 days to complete these forms.",
+    "Started is defined as the number of participants that have at least one data field completed.",
+    "Completed is defined as forms that are expected and have been marked as complete.",
+    "Overdue is defined as forms that are expected but have not been marked as complete and have exceeded the timepoint window.",
+    "Unobtainable is defined as forms that will not have data as participants has withdrawn from the study."
+    ),
+              "number")
+
+```
+
+```{r}
+#| label: cbt_baseline_pri_outcome_comp
+
+# Selects and merges necessary data.
+.cbt_pri_out_base <- .baseline_exp_data_cbt %>%
+  merge(.scr_exp_data,
+        by = "screening_id",
+        all.x = TRUE)
+
+# PHQ-9 calculations
+# Completion
+.phq_comp <- .cbt_pri_out_base %>%
+  group_by(is.na(phq_9_total)) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`is.na(phq_9_total)` == FALSE) %>%
+  select("count") %>%
+  as.character()
+
+# Overdue
+.phq_missing <- .cbt_pri_out_base %>%
+  #filter(is.na(days_since.y)) %>%
+  group_by(is.na(phq_9_total), days_since.y >= 15) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`is.na(phq_9_total)` == TRUE & `days_since.y >= 15` == TRUE) %>%
+  select("count") %>%
+  as.character()
+
+if (.phq_missing[2]  == "character(0)" |.phq_missing[2]  ==  "integer(0)") {
+    .phq_missing <- "0 (0.0%)"
+}
+
+#GAD-7 calculations
+# Completion
+.gad_comp <- .cbt_pri_out_base %>%
+  group_by(is.na(gad_7_total)) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`is.na(gad_7_total)` == FALSE) %>%
+  select("count") %>%
+  as.character()
+
+# Overdue
+.gad_missing <- .cbt_pri_out_base %>%
+  #filter(is.na(days_since.y)) %>%
+  group_by(is.na(gad_7_total), days_since.y >= 15) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`is.na(gad_7_total)` == TRUE & `days_since.y >= 15` == TRUE) %>%
+  select("count") %>%
+  as.character()
+
+if (.gad_missing[2]  == "character(0)" | .gad_missing[2]  ==  "integer(0)") {
+    .gad_missing <- "0 (0.0%)"
+}
+
+.cbt_baseline_pri_out <- data.frame(crf = c("PHQ-9",
+                                            "GAD-7"),
+                                    exp_num = c(paste0(nrow(.cbt_pri_out_base),
+                                                       "\u2075"),
+                                                paste0(nrow(.cbt_pri_out_base),
+                                                       "\u2075")),
+                                    comp_num = c(.phq_comp,
+                                                 .gad_comp),
+                                    num_over = c(.phq_missing,
+                                                 .gad_missing),
+                                    num_unob = c("0 (0.0%)",
+                                                 "0 (0.0%)"))
+
+```
+
+### Weekly Mediator Assessments
+
+```{r}
+#| label: cbt_week_expected_data_select_and_merge
+
+# Selects necessary fields from PHQ-2/GAD-2 CRF.
+.phq_gad_selection <- phq2_gad2 %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Stress CRF.
+.stress_selection <- stress %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Use of cognitive and
+#   behavioural skills CRF.
+.cognitive_selection <- use_of_cognitive_and_behavioural_skills %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Change in habit
+#   applied to worry CRF.
+.change_worry_selection <- change_in_habit_applied_to_worry_61f68e %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Change in habit
+#   applied to problem-solving CRF.
+.change_problem_selection <- change_in_habit_applied_to_problemsolving %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Self-Compassion
+#   Scale-Short Form CRF.
+.self_compassion_selection <- selfcompassion_scaleshort_form %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Brooding Scale-2
+#   Items CRF.
+.brood_2_selection <- brooding_scale2_items %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from 
+#   Self-efficacy/Mastery CRF.
+.self_mastery_selection <- selfefficacymastery %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+# Selects necessary fields from Problem
+#   clarification CRF.
+.clarification_selection <- problem_clarification_819b84 %>%
+  filter(grepl("Week",
+               redcap_event_name)) %>%
+  select(c("record_id",
+           "redcap_event_name",
+           ends_with("_complete")))
+
+.randomisation_selection_week <- .randomisation_selection %>%
+  mutate(redcap_event_name = NA)
+
+.cos_selection_week <- .cos_selection %>%
+  mutate(redcap_event_name = NA)
+
+# Merge necessary data into single data table
+.fu_week_exp_data_cbt <- .phq_gad_selection %>%
+  merge(.randomisation_selection_week,
+        by = c("record_id",
+               "redcap_event_name"),
+        all = TRUE) %>%
+  merge(.stress_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>%
+  merge(.cognitive_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.change_worry_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.change_problem_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.self_compassion_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.brood_2_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.self_mastery_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>%  
+  merge(.clarification_selection,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>% 
+  merge(.cos_selection_week,
+        by = c("record_id",
+               "redcap_event_name"),
+        all.x = TRUE) %>%
+  setDT()      
+
+```
+
+```{r}
+#| label: cbt_week_expected_data_cleaning
+
+# Ensures there is a row for each ID at each timepoint.
+.index <- CJ(record_id = unique(.fu_week_exp_data_cbt$record_id),
+             redcap_event_name = unique(.fu_week_exp_data_cbt$redcap_event_name))
+.fu_week_exp_data_cbt <-merge(.fu_week_exp_data_cbt,
+                              .index,
+                              by=c("record_id",
+                                   "redcap_event_name"),
+                              all=TRUE)
+
+# Sets IDs as numeric rather than characters.
+.fu_week_exp_data_cbt[,record_id := as.numeric(record_id)]
+
+
+# Calculates the number of days since the start date.
+.fu_week_exp_data_cbt[, days_since:= difftime(.data_date,
+                                              rando_dt,
+                                              units = "days")]
+
+.fu_week_exp_data_cbt[!is.na(with_date)][, days_since:= difftime(with_date,
+                                                                 rando_dt,
+                                                                 units = "days")] 
+
+.fu_week_exp_data_cbt[!is.na(rando_dt)][, days_since:= as.difftime(-1,
+                                                                   units = "days")] 
+
+# Ensures each row has a value for necessary variables.
+.fu_week_exp_data_cbt[,`:=`(rando_dt = na.locf(rando_dt),
+                            days_since = na.locf(days_since),
+                            with_date = na.locf(with_date)),
+                       by=record_id]
+
+```
+
+```{r}
+#| label: tbl-cbt_week_fu_exp_data
+#| tbl-cap: "Internet CBT 3 Month Follow Up data completeness"
+
+.week_num <- "Week 1 FU"
+.days <- 0
+.tp <- 18
+
+.cbt_week_1_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 2 FU"
+.days <- 18
+.tp <- 25
+
+.cbt_week_2_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 3 FU"
+.days <- 25
+.tp <- 32
+
+.cbt_week_3_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 4 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.cbt_week_4_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 5 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.cbt_week_5_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 6 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.cbt_week_6_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 7 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.cbt_week_7_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+.week_num <- "Week 8 FU"
+.days <- .tp
+.tp <- .days + 7
+
+.cbt_week_8_exp_tbl <- rbind(
+  .main_exp_comp(.data = filter(phq2_gad2,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "PHQ-2/GAD-2",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(stress,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Stress",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(use_of_cognitive_and_behavioural_skills,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Use of cognitive and behavioural skills",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_worry_61f68e,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to worry",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(change_in_habit_applied_to_problemsolving,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Change in habit applied to problem-solving",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfcompassion_scaleshort_form,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-Compassion Scale-Short Form",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(brooding_scale2_items,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Brooding Scale-2 Items",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(selfefficacymastery,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Self-efficacy/Mastery",
+                .tp_higher = .tp),
+  .main_exp_comp(.data = filter(problem_clarification_819b84,
+                               redcap_event_name == .week_num),
+                .exp = .fu_week_exp_data_cbt[days_since >= .days &
+                                             redcap_event_name == .week_num],
+                .crf_name = "Problem clarification",
+                .tp_higher = .tp),
+  deparse.level = 1
+)
+
+rbind(.cbt_week_1_exp_tbl,
+      .cbt_week_2_exp_tbl,
+      .cbt_week_3_exp_tbl,
+      .cbt_week_4_exp_tbl,
+      .cbt_week_5_exp_tbl,
+      .cbt_week_6_exp_tbl,
+      .cbt_week_7_exp_tbl,
+      .cbt_week_8_exp_tbl,
+      deparse.level = 1) %>%
+  kbl(col.names = c("Form",
+                    "Number expected\u00B9",
+                    "Number started (n(%))\u00B2",
+                    "Number completed (n(%))\u00B3",
+                    "Number overdue (n(%))\u2074",
+                    "Number marked as unobtainable (n(%))\u2075"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c(
+    "Expected is defined as the number of participants who have exceeded the time-point visit window. Participants have 7 days to complete these forms.",
+    "Started is defined as the number of participants that have at least one data field completed.",
+    "Completed is defined as forms that are expected and have been marked as complete.",
+    "Overdue is defined as forms that are expected but have not been marked as complete and have exceeded the timepoint window.",
+    "Unobtainable is defined as forms that will not have data as participants has withdrawn from the study."
+    ),
+              "number") %>%
+  pack_rows("Week 1",
+            1,
+            nrow(.cbt_week_1_exp_tbl)) %>%
+  pack_rows("Week 2",
+            nrow(.cbt_week_1_exp_tbl) + 1,
+            2 * nrow(.cbt_week_1_exp_tbl)) %>%
+  pack_rows("Week 3",
+            2 * nrow(.cbt_week_1_exp_tbl) + 1,
+            3 * nrow(.cbt_week_1_exp_tbl)) %>%
+  pack_rows("Week 4",
+            3 * nrow(.cbt_week_1_exp_tbl) + 1,
+            4 * nrow(.cbt_week_1_exp_tbl)) %>%
+  pack_rows("Week 5",
+            4 * nrow(.cbt_week_1_exp_tbl) + 1,
+            5 * nrow(.cbt_week_1_exp_tbl)) %>%
+  pack_rows("Week 6",
+            5 * nrow(.cbt_week_1_exp_tbl) + 1,
+            6 * nrow(.cbt_week_1_exp_tbl)) %>%
+  pack_rows("Week 7",
+            6 * nrow(.cbt_week_1_exp_tbl) + 1,
+            7 * nrow(.cbt_week_1_exp_tbl)) %>%
+  pack_rows("Week 8",
+            7 * nrow(.cbt_week_1_exp_tbl) + 1,
+            8 * nrow(.cbt_week_1_exp_tbl))
+```
+
+### 3 Month Follow Up
+
+```{r}
+#| label: cbt_3_month_fu_expected_data_select_and_merge
+
+# Selects necessary fields from PHQ-9 FU CRF.
+.phq_selection <- phq9_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           "phq_flo_help_contact",
+           contains("total"),
+           ends_with("_complete")))
+
+# Selects necessary fields from Risk Contact FU CRF.
+.risk_contact_selection <- risk_contact_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from GAD-7 FU CRF.
+.gad_selection <- gad7_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           contains("total"),
+           ends_with("_complete")))
+
+# Selects necessary fields from 5-item brooding scale
+#   FU CRF.
+.brood_selection <- item_brooding_scale_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Short-form Penn State
+#   Worry Questionnaires CRF.
+.pswq_selection <- shortform_penn_state_worry_questionnaires_fu %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WEMWBS CRF.
+.wemwbs_selection <- wemwbs %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Perceived Stress
+#   Scale CRF.
+.pss_selection <- perceived_stress_scale %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from PSSI CRF.
+.pssi_selection <- pssi %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Negative Experience
+#   measure CRF.
+.neg_exp_selection <- negative_experience_measure %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from WSAS CRF.
+.wsas_selection <- wsas %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Brief resilience scale CRF.
+.brs_selection <- brief_resilience_scale %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Academic grades
+#   self-report CRF.
+.ac_grades_selection <- academic_grades_selfreport %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Use of services/
+#   treatment received-incorporating NHS and student
+#   services CRF.
+.use_of_nhs_selection <- use_of_services_treatment_receivedincorporating_nh %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Use and application
+#   of intervention CRF.
+.use_and_app_selection <- use_and_application_of_intervention %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Adapted Client
+#   Satisfaction with Treatment Questionnaire-8 CRF.
+.adapt_client_selection <- adapted_client_satisfaction_with_treatment_questio %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+# Selects necessary fields from Open text questions about therapy CRF.
+.open_text_therapy_selection <- open_text_questions_about_therapy %>%
+  filter(redcap_event_name == "3m Followup") %>%
+  select(c("record_id",
+           ends_with("_complete")))
+
+.fu_3_month_exp_data_cbt <- .phq_selection %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.y = TRUE) %>%
+  merge(.risk_contact_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.gad_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.brood_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pswq_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wemwbs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pss_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.pssi_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.neg_exp_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.wsas_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.brs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.ac_grades_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.use_of_nhs_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.use_and_app_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.adapt_client_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.open_text_therapy_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  merge(.cos_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+```
+
+```{r}
+#| label: cbt_3_month_fu_expected_data_cleaning
+
+# Sets IDs as numeric rather than character.
+.fu_3_month_exp_data_cbt[,record_id := as.numeric(record_id)]
+
+
+# Calculates the number of days since the start date.
+.fu_3_month_exp_data_cbt[, days_since:= difftime(.data_date,
+                                                 rando_dt,
+                                                 units = "days")]
+
+.fu_3_month_exp_data_cbt[!is.na(with_date)][, days_since:= difftime(with_date,
+                                                                    rando_dt,
+                                                                    units = "days")] 
+
+.fu_3_month_exp_data_cbt[!is.na(rando_dt)][, days_since:= as.difftime(-1,
+                                                                      units = "days")]
+
+```
+
+
+```{r}
+#| label: tbl-cbt_3_month_fu_exp_data
+#| tbl-cap: "Internet CBT 3 Month Follow Up data completeness"
+rbind(
+  .main_exp_comp(.data = filter(phq9_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90],
+                .crf_name = "PHQ-9",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(risk_contact_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 &
+                                                phq_flo_help_contact == "Yes, I would like to contact the team"
+                                                ],
+                .crf_name = "Risk Contact - Follow Up",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(gad7_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #phq9_fu_complete == "Complete"
+                                                ],
+                .crf_name = "GAD-7",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(item_brooding_scale_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #gad7_fu_complete == "Complete"
+                                                ],
+                .crf_name = "5-item Brooding scale",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(shortform_penn_state_worry_questionnaires_fu,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #item_brooding_scale_fu_complete == "Complete"
+                                                ],
+                .crf_name = "Short-form Penn State Worry Questionnaire",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(wemwbs,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #shortform_penn_state_worry_questionnaires_fu_complete == "Complete"
+                                                ],
+                .crf_name = "WEMWBS",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(perceived_stress_scale,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #wemwbs_complete == "Complete"
+                                                ],
+                .crf_name = "Perceived stress scale",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(pssi,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #perceived_stress_scale_complete == "Complete"
+                                                ],
+                .crf_name = "PSSI",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(negative_experience_measure,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #pssi_complete == "Complete"
+                                                ],
+                .crf_name = "Negative Experience measure",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(wsas,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #negative_experience_measure_complete == "Complete"
+                                                ],
+                .crf_name = "WSAS",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(brief_resilience_scale,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #wsas_complete == "Complete"
+                                                ],
+                .crf_name = "Brief Resilience Scale",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(academic_grades_selfreport,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #brief_resilience_scale_complete == "Complete"
+                                                ],
+                .crf_name = "Academic grades self-report",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(use_of_services_treatment_receivedincorporating_nh,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #academic_grades_selfreport_complete == "Complete"
+                                                ],
+                .crf_name = "Use of services (NHS/Student studies)",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(use_and_application_of_intervention,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #use_of_services_treatment_receivedincorporating_nh_complete == "Complete"
+                                                ],
+                .crf_name = "Use and application of intervention",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(adapted_client_satisfaction_with_treatment_questio,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #use_and_application_of_intervention_complete == "Complete"
+                                                ],
+                .crf_name = "Adapted Client Satisfaction with Treatment Questionnaire-8",
+                .tp_higher = 105),
+  .main_exp_comp(.data = filter(open_text_questions_about_therapy,
+                               redcap_event_name == "3m Followup"),
+                .exp = .fu_3_month_exp_data_cbt[days_since >= 90 #&
+                                                #adapted_client_satisfaction_with_treatment_questio_complete == "Complete"
+                                                ],
+                .crf_name = "Open text questions about therapy",
+                .tp_higher = 105),
+#  .main_exp_comp(.data = filter(open_text_questions_about_therapy,
+#                               redcap_event_name == "3m Followup"),
+#                .exp = .fu_3_month_exp_data_cbt[days_since >= 90],
+#                .crf_name = "Overall Completion at 3 Months",
+#                .tp_higher = 105),
+  deparse.level = 1
+) %>%
+  kbl(col.names = c("Form",
+                    "Number expected\u00B9",
+                    "Number started (n(%))\u00B2",
+                    "Number completed (n(%))\u00B3",
+                    "Number overdue (n(%))\u2074",
+                    "Number marked as unobtainable (n(%))\u2075"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c(
+    "Expected is defined as the number of participants who have exceeded the time-point visit window. Participants have 14 days to complete these forms.",
+    "Started is defined as the number of participants that have at least one data field completed.",
+    "Completed is defined as forms that are expected and have been marked as complete.",
+    "Overdue is defined as forms that are expected but have not been marked as complete and have exceeded the timepoint window.",
+    "Unobtainable is defined as forms that will not have data as participants has withdrawn from the study."
+    ),
+              "number")
+
+```
+
+## Primary Endpoints
+
+```{r}
+#| label: cbt_3m_pri_outcome_comp
+
+# PHQ-9 calculations
+# Completion
+.phq_comp <- .fu_3_month_exp_data_cbt %>%
+  filter(days_since >= 90) %>%
+  group_by(is.na(phq_flo_total)) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`is.na(phq_flo_total)` == FALSE) %>%
+  select("count") %>%
+  as.character()
+
+# Overdue
+.phq_missing <- .fu_3_month_exp_data_cbt %>%
+  #filter(!is.na(days_since)) %>%
+  filter(days_since >= 90) %>%
+  filter(is.na(with_date)) %>%
+  group_by(is.na(phq_flo_total), days_since > 105) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`is.na(phq_flo_total)` == TRUE & `days_since > 105` == TRUE) %>%
+  select("count") %>%
+  as.character()
+
+if (.phq_missing[2]  == "character(0)" |.phq_missing[2]  ==  "integer(0)") {
+    .phq_missing <- "0 (0.0%)"
+} else {
+   .phq_missing <- .phq_missing[2]
+}
+
+# Unobtainable
+.phq_unob <- .fu_3_month_exp_data_cbt %>%
+  mutate(unob_stat = case_when(
+    is.na(phq_flo_total) &
+    !is.na(with_date) ~ "Unobtainable",
+    .default = "Obtainable"
+  )) %>% filter(days_since >= 90) %>%
+  group_by(unob_stat == "Unobtainable", days_since > 105) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`unob_stat == "Unobtainable"` == TRUE & `days_since > 105` == TRUE) %>%
+  select("count") %>%
+  as.character()
+
+if (.phq_unob[2]  == "character(0)" |.phq_unob[2]  ==  "integer(0)") {
+    .phq_unob <- "0 (0.0%)"
+} else {
+   .phq_unob <- .phq_unob[2]
+}
+
+#GAD-7 calculations
+# Completion
+.gad_comp <- .fu_3_month_exp_data_cbt %>%
+  filter(days_since >= 90) %>%
+  group_by(is.na(gad_flo_total)) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`is.na(gad_flo_total)` == FALSE) %>%
+  select("count") %>%
+  as.character()
+
+# Overdue
+.gad_missing <- .fu_3_month_exp_data_cbt %>%
+  filter(is.na(with_date)) %>%
+  filter(days_since >= 90) %>%
+  group_by(is.na(gad_flo_total), days_since > 105) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`is.na(gad_flo_total)` == TRUE & `days_since > 105` == TRUE) %>%
+  select("count") %>%
+  as.character()
+
+if (.gad_missing[2]  == "character(0)" | .gad_missing[2]  ==  "integer(0)") {
+    .gad_missing <- "0 (0.0%)"
+} else {
+   .gad_missing <- .gad_missing[2]
+}
+
+# Unobtainable
+.gad_unob <- .fu_3_month_exp_data_cbt %>%
+  mutate(unob_stat = case_when(
+    is.na(gad_flo_total) &
+    !is.na(with_date) ~ "Unobtainable",
+    .default = "Obtainable"
+  )) %>% filter(days_since >= 90) %>%
+  group_by(unob_stat == "Unobtainable", days_since > 105) %>%
+  summarise(count = n()) %>%
+  janitor::adorn_percentages(denominator = "col") %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front") %>%
+  subset(`unob_stat == "Unobtainable"` == TRUE & `days_since > 105` == TRUE) %>%
+  select("count") %>%
+  as.character()
+
+if (.gad_unob[2]  == "character(0)" |.gad_unob[2]  ==  "integer(0)") {
+    .gad_unob <- "0 (0.0%)"
+} else {
+   .gad_unob <- .gad_unob[2]
+}
+
+.cbt_3m_pri_out <- data.frame(crf = c("PHQ-9",
+                                      "GAD-7"),
+                              exp_num = c(paste0(nrow(.fu_3_month_exp_data_cbt[days_since >= 90])),
+                                          paste0(nrow(.fu_3_month_exp_data_cbt[days_since >= 90]))),
+                              comp_num = c(.phq_comp,
+                                           .gad_comp),
+                              num_over = c(.phq_missing,
+                                           .gad_missing),
+                              num_unob = c(.phq_unob,
+                                           .gad_unob)) 
+                                           
+                                           
+rbind(
+      .cbt_baseline_pri_out,
+      .cbt_3m_pri_out
+)                                           %>%
+  kbl(col.names = c("Form",
+                    "Number expected\u00B9",
+                    "Number completed (n(%))\u00B2",
+                    "Number overdue (n(%))\u00B3",
+                    "Number marked as unobtainable (n(%))\u2074"),
+      row_names = NULL) %>%
+  pack_rows("Baseline",
+            1,
+            2) %>%
+  pack_rows("3 Month Follow up",
+            3,
+            4) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c(
+    "Expected is defined as the number of participants who have exceeded the time-point visit window. Participants have 14 days to provide these outcomes.",
+    "Completed is defined as data that is expected and is present in the database.",
+    "Overdue is defined as data that is expected but has not been entered into the database and has exceeded the timepoint window.",
+    "Unobtainable is defined as data that will not be entered due to the participant withdrawing from the study."
+    ),
+              "number")
+
+```

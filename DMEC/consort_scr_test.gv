@@ -1,0 +1,87 @@
+digraph consort_diagram {
+  graph [layout = dot]
+
+node [shape = rectangle, style = "rounded,filled", fillcolor = "#A9C7FD" color = "#4F81BD"]
+label13 [label = "Pre-Screening Eligibility Form"]
+label14 [label = "Pre-Screening"]
+label15 [label = "Screening"]
+label16 [label = "Consented to trial"]
+label17 [label = "Consent by trial"]
+label18 [label = "Given access to trial specific survey"]
+
+
+edge[style=invis];
+label13 -> label14 -> label15 -> label16 -> label17 -> label18;
+
+
+# node definitions with substituted label text
+  node [shape = rectangle, fillcolor = Biege, style="", fillcolor = "", color = ""]
+
+node1 [label = "Accessed REDCap Survey (n=993)"]
+node2 [label = "Excluded (n=31):\l• Not a University Student (n=18)\l• Did not complete basic eligibility form (n=9)\l• Does not have internet access (n=4)\l"]
+node3 [label = "Accessed Consent Form A (n=962)"]
+node4 [label = "Excluded (n=331):\l• Did not complete consent form A (n=331)\l"]
+node5 [label = "Consented to Consent Form A (n=631)"]
+node6 [label = "Consented to Consent Form B (n=344)"]
+node7 [label = "Consented to Bounce Back (n=45)"]
+node8 [label = "Consented to Internet CBT (n=173)"]
+node9 [label = "Consented to Reducing Worry (n=126)"]
+node10 [label = "Participants given access to trial baseline survey (n=45)"]
+node11 [label = "Participants given access to trial baseline survey (n=173)"]
+node12 [label = "Participants given access to trial baseline survey (n=126)"]
+
+
+## Invisible point node for joints
+
+node [shape = point, width = 0]
+
+P1 P2 P3 P4 P5
+
+subgraph {
+  rank = same; rankdir = LR; label13;  node1;
+  }
+subgraph {
+  rank = same; rankdir = LR; P1; node2;
+  }
+subgraph {
+  rank = same; rankdir = LR; label14;  node3;
+  }
+subgraph {
+  rank = same; rankdir = LR; P2; node4;
+  }
+subgraph {
+  rank = same; rankdir = LR; label15;  node5;
+  }
+subgraph {
+  rank = same; rankdir = LR; label16;  node6;
+  }
+subgraph {
+  rank = same; rankdir = LR; P3; P4; P5;
+  }
+subgraph {
+  rank = same; rankdir = LR; label17;  node7; node8; node9;
+  }
+subgraph {
+  rank = same; rankdir = LR; label18;  node10; node11; node12;
+  }
+
+edge[style=""];
+
+node1 -> P1 [arrowhead = none];
+P1 -> node2;
+P1 -> node3;
+node3 -> P2 [arrowhead = none];
+P2 -> node4;
+P2 -> node5;
+node5 -> node6;
+node6 -> P4 [arrowhead = none];
+P3 -> node7;
+P4 -> node8;
+P5 -> node9;
+P3 -> P4 -> P5 [arrowhead = none, minlen = 10];
+node7 -> node10;
+node8 -> node11;
+node9 -> node12;
+
+
+}

@@ -1,0 +1,470 @@
+---
+title: "Bounce Back DMEC (Closed)"
+echo: false
+---
+
+## CONSORT Diagram
+
+```{r}
+#| label: data_import_scr
+#| output: false
+
+library(tidyREDCap)
+library(tidyverse)
+library(expss)
+
+rm(list = ls()) # Ensures workspace is clear before starting.
+
+# Imports data from REDCap using API (Re-run this section to refresh the data).
+tidyREDCap::import_instruments( # Tells R to import all instruments/CRFs used in the project.
+  "https://rc.ctu.exeter.ac.uk/api/", # URL of the site to import from.
+  Sys.getenv("nurture_u_key"), # API Token.
+  record_id = "screening_id", # Tells R the label of the Record ID on REDCap.
+  drop_blank = FALSE
+)
+```
+
+```{r}
+###-----------------------------------------------------------------------------
+### Variables
+# Replace with the desired filename, date should be included in filename.
+.file_name <- paste("CLOSE_BB_SCR_", Sys.Date(), ".RData", sep = "")
+
+# Replace with the desired file path to save in. Ensure the path ends in "/".
+.file_path <- "C:/Users/ap1114/OneDrive - University of Exeter/Documents/Trials/NURTURE-U/Data/"
+###-----------------------------------------------------------------------------
+
+##------------------------------------------------------------------------------
+## Code
+
+# This saves every dataframe currently loaded. If ran just after importing data that should just be the CRFs from REDCap.
+save(list = ls(), file = paste(.file_path, .file_name, sep=""))
+##------------------------------------------------------------------------------
+```
+
+```{r}
+#| label: consort_data_scr
+#| output: false
+library(consort)
+.N <- nrow(nurtureu_introduction)
+
+
+.trialno <- nurtureu_introduction$screening_id
+
+.exc1 <- rep(NA, .N)
+.exc1 <- ifelse(nurtureu_introduction$intro_ineligible == 1, NA, "Not meeting inclusion criteria")
+
+.induc1 <- rep(NA, .N)
+.induc1[is.na(.exc1)] <- .trialno[is.na(.exc1)]
+
+.exc2 <- rep(NA, .N)
+.exc2[nurture_u_consent_for_screening$nurture_u_consent_for_screening_complete == "Incomplete"] <- "Incomplete" 
+
+.induc2 <- rep(NA, .N)
+.induc2[is.na(.exc2)] <- .trialno[is.na(.exc2)]
+
+.exc3 <- rep(NA, .N)
+.exc3[grepl("Incomplete", lidas_adapted$lidas_adapted_complete, ignore.case = TRUE)] <- "Incomplete"
+.exc3[grepl("Deviat", .trialno, ignore.case = TRUE)] <- "Deviated Participant*"
+.exc3[is.na(.exc3)] <- ifelse(consent_for_bounce_back_trial$consent_for_bounce_back_trial_complete[is.na(.exc3)] == "Incomplete" &
+         consent_for_internetcbt_trial$consent_for_internetcbt_trial_complete[is.na(.exc3)] == "Incomplete" &
+         consent_for_reduce_worry_trial$consent_for_reduce_worry_trial_complete[is.na(.exc3)] == "Incomplete", 
+         "Eligible but did not consent", .exc3[is.na(.exc3)])
+.exc3[!grepl("Incomplete", ineligible$ineligible_complete, ignore.case = TRUE)] <- "Ineligible"
+.exc3[grepl("Duplicated", .trialno, ignore.case = TRUE)] <- "Duplicated participant"
+
+.induc3 <- rep(NA, .N)
+.induc3[is.na(.exc3)] <- .trialno[is.na(.exc3)]
+
+.arm <- rep(NA, .N)
+.arm[!is.na(.induc3) & (consent_for_bounce_back_trial$consent_for_bounce_back_trial_complete == "Complete")] <- "Bounce Back"
+.arm[!is.na(.induc3) & (consent_for_internetcbt_trial$consent_for_internetcbt_trial_complete == "Complete")] <- "Internet CBT"
+.arm[!is.na(.induc3) & (consent_for_reduce_worry_trial$consent_for_reduce_worry_trial_complete == "Complete")] <- "Reducing Worry"
+
+.phq9 <- rep(NA, .N)
+.phq9[!is.na(.induc3)] <- phq9$phq_9_total[!is.na(.induc3)]
+
+.gad7 <- rep(NA, .N)
+.gad7[!is.na(.induc3)] <- gad7$gad_7_total[!is.na(.induc3)]
+
+.lidas <- rep(NA, .N)
+.lidas[!is.na(.induc3)] <- lidas_adapted$lidas_meet_past_mde[!is.na(.induc3)]
+
+.pswq <- rep(NA, .N)
+.pswq[!is.na(.induc3)] <- shortform_penn_state_worry_questionnaire$pswq_8_total[!is.na(.induc3)]
+
+.brood <- rep(NA, .N)
+.brood[!is.na(.induc3)] <- item_brooding_scale$bro_5_total[!is.na(.induc3)]
+
+#.pri_out <- data.frame(.induc3, .arm, .phq9, .gad7, .lidas)
+
+.df_con <- data.frame(.trialno, .exc1, .induc1, .exc2, .induc2, .exc3, .induc3, .arm, .phq9, .gad7, .lidas, .brood, .pswq)
+
+```
+
+```{r}
+#| label: data_import_bb_1
+#| output: false
+
+library(tidyREDCap)
+library(tidyverse)
+library(expss)
+rm(list = ls()) # Ensures workspace is empty before importing data.
+
+# Imports data from REDCap using API (Re-run this section to refresh the data).
+tidyREDCap::import_instruments( # Tells R to import all instruments/CRFs used in the project.
+  "https://rc.ctu.exeter.ac.uk/api/", # URL of the site to import from.
+  Sys.getenv("bounce_back_key"), # API Token.
+  record_id = "record_id", # Tells R the label of the Record ID on REDCap.
+  first_record_id = "NB_1 (Duplicate)"
+)
+
+# The following creates a list of CRF data frames, this allows for a filter to be applied to each CRF at once.
+.dfs_all <- Filter(function(x) is(x, "data.frame"), mget(ls())) # Creates a list of CRFs. This allows for functions to be applied to all CRFs at once if needed.
+names(.dfs_all) <- set_names(ls(all.names = FALSE))
+
+```
+
+```{r}
+###-----------------------------------------------------------------------------
+### Variables
+# Replace with the desired filename, date should be included in filename.
+.file_name <- paste("CLOSE_BB_SCR_", Sys.Date(), ".RData", sep = "")
+
+# Replace with the desired file path to save in. Ensure the path ends in "/".
+.file_path <- "C:/Users/ap1114/OneDrive - University of Exeter/Documents/Trials/NURTURE-U/Data/"
+###-----------------------------------------------------------------------------
+
+##------------------------------------------------------------------------------
+## Code
+
+# This saves every dataframe currently loaded. If ran just after importing data that should just be the CRFs from REDCap.
+save(list = ls(), file = paste(.file_path, .file_name, sep=""))
+##------------------------------------------------------------------------------
+```
+
+```{r}
+#| label: data_filter
+#| output: false
+
+# The following filters out duplicate entries from the CRF data.
+.dfs_all <- .dfs_all %>% 
+  lapply(function(x) filter(x,!grepl("Duplicate", record_id, ignore.case = TRUE)))
+names(.dfs_all) <- set_names(ls(all.names = FALSE))
+list2env(.dfs_all, envir = .GlobalEnv)
+
+```
+
+```{r}
+#| label: rand_filter
+#| output: false
+
+.rand_choice <- na.omit(randomisation$rando_allocation)[!duplicated(randomisation$rando_allocation)]
+
+.arm_a <- .rand_choice[1]
+.arm_b <- .rand_choice[2]
+```
+
+```{r}
+#| label: Consort_bb_data
+#| output: false
+
+# Gives number of participants.
+.N <- nrow(filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE)))
+
+# Retrieves both record and screening ID for each participant.
+.trialno_bb <- filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$record_id
+.scr_id <- select(filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE)), "screening_id" , "record_id")
+colnames(.scr_id) <- c(".trialno", ".trialno_bb")
+
+# Finds participants who have not completed baseline and their current status.
+.rando_dt <- drop_all_labels(filter(randomisation, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$rando_dt) 
+.rando_dt[is.na(.rando_dt)] <- Sys.Date()
+
+.exc1_bb <- rep(NA, .N)
+.exc1_bb[filter(randomisation, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$randomisation_complete == "Incomplete" & difftime(.rando_dt, filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$con_start_dt, units = "days") > 14] <- "Incomplete (Blocked)"
+.exc1_bb[filter(randomisation, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$randomisation_complete == "Incomplete" & difftime(.rando_dt, filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$con_start_dt, units = "days") < 15] <- "Incomplete (Awaiting data entry)"
+
+# List of participants who have finished Baseline.
+.induc1_bb <- rep(NA, .N)
+.induc1_bb[is.na(.exc1_bb)] <- .scr_id$.trialno_bb[is.na(.exc1_bb)]
+.induc1_bb <- as.data.frame(.induc1_bb)
+
+# Identifies which arm each participant has been allocated to.
+.arm_bb <- rep(NA, .N)
+.arm_bb[!is.na(.induc1_bb)] <- filter(randomisation, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$rando_allocation
+.arm_bb[!is.na(.induc1_bb)] <- ifelse(grepl(.arm_b,.arm_bb[!is.na(.arm_bb)]), "Arm B", "Arm A")
+
+.rando_dt[.arm_bb == "Arm A"] <- .rando_dt[.arm_bb == "Arm A"] + lubridate::weeks(6)
+
+# Finds participants who have not completed the 6 week follow up.
+colnames(.induc1_bb) <- "record_id"
+.exc2_bb <- merge(.induc1_bb, filter(use_of_services_treatment_receivedincorporating_nh, grepl("6", redcap_event_name, ignore.case = TRUE)), by = "record_id", all = TRUE) %>%
+  select("record_id", "use_of_services_treatment_receivedincorporating_nh_complete")
+.exc2_bb <- inner_join(.induc1_bb, .exc2_bb, by = "record_id", multiple = "any")
+.exc2_bb[2][.exc2_bb[2] == "Incomplete"] <- NA
+.exc2_bb[2][is.na(.exc2_bb[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(6,7)) == 2] <- "Incomplete (overdue)"
+.exc2_bb[2][is.na(.exc2_bb[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(6,7)) == 1] <- "Incomplete (awaiting data entry)"
+.exc2_bb[2][is.na(.exc2_bb[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(6,7)) == 0] <- "Incomplete (awaiting access)"
+.exc2_bb[2][.exc2_bb[2] == "Complete"] <- NA
+.exc2_bb[2][is.na(.exc2_bb[1])] <- NA
+.exc2_bb <- .exc2_bb[2]
+
+colnames(.induc1_bb) <- ".induc1_bb"
+colnames(.exc2_bb) <- ".exc2_bb"
+
+# List of participants who have completed 6 week follow up.
+.induc2_bb <- rep(NA, .N)
+.induc2_bb[is.na(.exc2_bb)] <- .trialno_bb[is.na(.exc2_bb)]
+.induc2_bb <- as.data.frame(.induc2_bb)
+.exc2_bb[is.na(.induc1_bb)] <- NA
+
+colnames(.induc2_bb) <- "record_id"
+.exc3_bb <- merge(.induc2_bb, filter(use_of_services_treatment_receivedincorporating_nh, grepl("12", redcap_event_name, ignore.case = TRUE)), by = "record_id", all = TRUE) %>%
+  select("record_id", "use_of_services_treatment_receivedincorporating_nh_complete")
+.exc3_bb <- inner_join(.induc2_bb, .exc3_bb, by = "record_id", multiple = "any")
+.exc3_bb[2][.exc3_bb[2] == "Incomplete"] <- NA
+.exc3_bb[2][is.na(.exc3_bb[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(12,13)) == 2] <- "Incomplete (overdue)"
+.exc3_bb[2][is.na(.exc3_bb[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(12,13)) == 1] <- "Incomplete (awaiting data entry)"
+.exc3_bb[2][is.na(.exc3_bb[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(12,13)) == 0] <- "Incomplete (awaiting access)"
+.exc3_bb[2][.exc3_bb[2] == "Complete"] <- NA
+.exc3_bb[2][is.na(.exc3_bb[1])] <- NA
+.exc3_bb <- .exc3_bb[2]
+
+colnames(.induc2_bb) <- ".induc2_bb"
+colnames(.exc3_bb) <- ".exc3_bb"
+
+# List of participants who have completed 12 week follow up.
+.induc3_bb <- rep(NA, .N)
+.induc3_bb[is.na(.exc3_bb)] <- .scr_id$.trialno_bb[is.na(.exc3_bb)]
+.induc3_bb <- as.data.frame(.induc3_bb)
+.exc3_bb[is.na(.induc2_bb)] <- NA
+
+.df <- data.frame(.scr_id, .exc1_bb, .induc1_bb, .arm_bb, .exc2_bb, .induc2_bb, .exc3_bb, .induc3_bb)
+.df_bb <- merge(.df_con, .df, by = ".trialno", all = TRUE)
+
+.df_bb$.arm[.df_bb$.arm == "Bounce Back"] <- NA
+.df_bb$.arm[.df_bb$.arm == "Internet CBT" | .df_bb$.arm == "Reducing Worry"] <- "Consented to other NURTURE-U Trial"
+
+```
+
+```{r}
+#| label: Consort_bb_arms
+#| output: false
+
+.out_bb_arms <- consort_plot(data = .df_bb,
+                    orders = c(.trialno = "Population",
+                               .exc1    = "Excluded",
+                               .induc1 = "Start of Screening",
+                               .exc2    = "Excluded",
+                               .induc2 = "Consented to Screening",
+                               .exc3    = "Excluded",
+                               .induc3 = "Patient consented to Trial",
+                               .arm     = "Excluded",
+                               .trialno_bb = "Start of Baseline",
+                               .exc1_bb = "Excluded",
+                               .arm_bb = "Randomised Patient",
+                               .exc2_bb = "Excluded",
+                               .induc2_bb = "6 Week Follow Up",
+                               .exc3_bb = "Excluded",
+                               .induc3_bb = "12 Week Follow Up"
+                               ),
+                    side_box = c(".exc1", ".exc2", ".exc3", ".arm", ".exc1_bb", ".exc2_bb", ".exc3_bb"),
+                    allocation = ".arm_bb",
+                    labels = c("1" = "Pre-Screening", "2" = "Screening", 
+                               "5" = "Baseline", "6" = "Randomisation", 
+                               "7" = "Follow up Period"),
+                    cex = 0.9)
+
+cat(build_grviz(.out_bb_arms), file = "consort_bb_arms.gv")
+
+```
+
+```{r}
+#| label: Consort_bb_arms_save
+#| output: false
+png("consort_diagram_bb_closed.png", width = 30, 
+    height = 40, res = 300, units = "cm", type = "cairo") 
+plot(.out_bb_arms)
+dev.off() 
+```
+
+```{dot}
+//| label: fig-consort_bb_arms
+//| fig-cap: "CONSORT diagram of NURTURE-U Bounce Back."
+//| file: consort_bb_arms.gv
+```
+
+```{r}
+#| label: data_filter_2_A
+#| output: false
+
+# The following filters out duplicate entries from the CRF data.
+.pri_out <- filter(.df_bb, !is.na(.df_bb$.trialno_bb)) %>%
+  filter(.arm_bb == "Arm A")
+.rand_a <- select(.pri_out, ".trialno_bb")
+colnames(.rand_a) <- "record_id"
+.dfs <- lapply(.dfs_all, function(x) x[x$record_id %in% .rand_a[[1]],])
+names(.dfs) <- set_names(ls(all.names = FALSE))
+list2env(.dfs, envir = .GlobalEnv)
+```
+
+## Follow Up (Arm A)
+
+### Withdrawals (Arm A)
+
+```{r}
+#| label: with_checker_A
+
+# Prints the number of withdrawals.
+.any_with <- ifelse(exists('withdrawal') == TRUE, sprintf("There have been %s withdrawals during this trial", nrow(filter(withdrawal, withdrawal_complete == "Complete"))), "There have been no withdrawals in this trial")
+print(.any_with)
+
+```
+
+```{r}
+#| label: tbl-withdrawal_A
+#| tbl-cap: "Summary of Reducing Worry withdrawals."
+
+.with_list <- as.data.frame(matrix(ncol = 5, nrow = 0))
+if(exists('withdrawal') == TRUE){.with_list <- select(filter(withdrawal, withdrawal_complete == "Complete"), "with_fea_ch_dt", "with_fea_type", "with_fea_timepoint", "with_fea_reason", "record_id")}
+colnames(.with_list) <- c("Date of Status Change", "Withdrawal type", "Withdrawal timepoint", "Reason for withdrawal", "Record ID")
+
+knitr::kable(.with_list)
+
+```
+
+## Safety (Arm A)
+
+### AEs (Arm A)
+
+```{r}
+#| label: ae_checker_A
+
+# Prints the number of AEs.
+.any_ae <- ifelse(exists('ae') == TRUE, sprintf("There have been %s AEs during this trial", nrow(filter(ae, ae_complete == "Complete"))), "There have been no AEs in this trial")
+print(.any_ae)
+
+```
+
+```{r}
+#| label: tbl-ae_A
+#| tbl-cap: "Summary of Adverse Events."
+
+.ae_list <- as.data.frame(matrix(ncol = 5, nrow = 0))
+if(exists('ae') == TRUE){.ae_list <- select(filter(ae, ae_complete == "Complete"), "ae_fea_number", "ae_fea_event_name", "ae_fea_start_dt", "ae_fea_relation" , "ae_fea_ppt_id")}
+colnames(.ae_list) <- c("AE Number", "AE Event Name", "AE Start Date", "Relationship to Trial" , "Record ID")
+
+knitr::kable(.ae_list)
+
+```
+
+### SAEs (Arm A)
+
+```{r}
+#| label: sae_checker_A
+
+# Prints the number of SAEs.
+.any_sae <- ifelse(exists('sae') == TRUE, sprintf("There have been %s SAEs during this trial", nrow(filter(sae, sae_complete == "Complete"))), "There have been no SAEs in this trial")
+print(.any_sae)
+
+```
+
+```{r}
+#| label: tbl-sae_A
+#| tbl-cap: "Summary of Severe Adverse Events."
+
+.sae_list <- as.data.frame(matrix(ncol = 5, nrow = 0))
+if(exists('sae') == TRUE){.sae_list <- select(filter(sae, sae_complete == "Complete"), "sae_fea_number", "sae_fea_event_name", "sae_fea_start_dt", "sae_fea_relation" , "sae_fea_ppt_id")}
+colnames(.sae_list) <- c("SAE Number", "SAE Event Name", "SAE Start Date", "Relationship to Trial" , "Record ID")
+
+knitr::kable(.sae_list)
+
+```
+
+```{r}
+#| label: data_filter_2_B
+#| output: false
+
+# The following filters out duplicate entries from the CRF data.
+.pri_out <- filter(.df_bb, !is.na(.df_bb$.trialno_bb)) %>%
+  filter(.arm_bb == "Arm B")
+.rand_a <- select(.pri_out, ".trialno_bb")
+colnames(.rand_a) <- "record_id"
+.dfs <- lapply(.dfs_all, function(x) x[x$record_id %in% .rand_a[[1]],])
+names(.dfs) <- set_names(ls(all.names = FALSE))
+list2env(.dfs, envir = .GlobalEnv)
+```
+
+## Follow Up (Arm B)
+
+### Withdrawals (Arm B)
+
+```{r}
+#| label: with_checker_B
+
+# Prints the number of withdrawals.
+.any_with <- ifelse(exists('withdrawal') == TRUE, sprintf("There have been %s withdrawals during this trial", nrow(filter(withdrawal, withdrawal_complete == "Complete"))), "There have been no withdrawals in this trial")
+print(.any_with)
+
+```
+
+```{r}
+#| label: tbl-withdrawal_B
+#| tbl-cap: "Summary of Reducing Worry withdrawals."
+
+.with_list <- as.data.frame(matrix(ncol = 5, nrow = 0))
+if(exists('withdrawal') == TRUE){.with_list <- select(filter(withdrawal, withdrawal_complete == "Complete"), "with_fea_ch_dt", "with_fea_type", "with_fea_timepoint", "with_fea_reason", "record_id")}
+colnames(.with_list) <- c("Date of Status Change", "Withdrawal type", "Withdrawal timepoint", "Reason for withdrawal", "Record ID")
+
+knitr::kable(.with_list)
+
+```
+
+## Safety (Arm B)
+
+### AEs (Arm B)
+
+```{r}
+#| label: ae_checker_B
+
+# Prints the number of AEs.
+.any_ae <- ifelse(exists('ae') == TRUE, sprintf("There have been %s AEs during this trial", nrow(filter(ae, ae_complete == "Complete"))), "There have been no AEs in this trial")
+print(.any_ae)
+
+```
+
+```{r}
+#| label: tbl-ae_B
+#| tbl-cap: "Summary of Adverse Events."
+
+.ae_list <- as.data.frame(matrix(ncol = 5, nrow = 0))
+if(exists('ae') == TRUE){.ae_list <- select(filter(ae, ae_complete == "Complete"), "ae_fea_number", "ae_fea_event_name", "ae_fea_start_dt", "ae_fea_relation" , "ae_fea_ppt_id")}
+colnames(.ae_list) <- c("AE Number", "AE Event Name", "AE Start Date", "Relationship to Trial" , "Record ID")
+
+knitr::kable(.ae_list)
+
+```
+
+### SAEs (Arm B)
+
+```{r}
+#| label: sae_checker_B
+
+# Prints the number of SAEs.
+.any_sae <- ifelse(exists('sae') == TRUE, sprintf("There have been %s SAEs during this trial", nrow(filter(sae, sae_complete == "Complete"))), "There have been no SAEs in this trial")
+print(.any_sae)
+
+```
+
+```{r}
+#| label: tbl-sae_B
+#| tbl-cap: "Summary of Severe Adverse Events."
+
+.sae_list <- as.data.frame(matrix(ncol = 5, nrow = 0))
+if(exists('sae') == TRUE){.sae_list <- select(filter(sae, sae_complete == "Complete"), "sae_fea_number", "sae_fea_event_name", "sae_fea_start_dt", "sae_fea_relation" , "sae_fea_ppt_id")}
+colnames(.sae_list) <- c("SAE Number", "SAE Event Name", "SAE Start Date", "Relationship to Trial" , "Record ID")
+
+knitr::kable(.sae_list)
+
+```

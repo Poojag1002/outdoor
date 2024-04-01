@@ -1,0 +1,863 @@
+---
+title: "Expected vs Complete Testing"
+date-modified: today
+embed-resources: true
+format: docx
+prefer-html: true
+execute:
+  echo: false
+  warning: false
+tbl-cap-location: top
+toc: true
+toc-depth: 3
+toc-title: "Reports:"
+title-block-banner: true
+fig-asp: 0.618
+fig-width: 6
+fig-align: center
+out-width: "70%"
+---
+
+```{r}
+#| label: library_load
+#| output: false
+
+library(tidyREDCap)
+library(tidyverse)
+library(expss)
+library(knitr)
+library(kableExtra)
+library(consort)
+library(Hmisc)
+library(data.table)
+
+# -----------------------------------------------------------------
+# Can be commented out/removed if this is already installed.
+devtools::install_github("ExeCTU/CT_R_Package",
+                         ref = "main",
+                         auth_token = Sys.getenv("github_token")                 
+                        )
+# -----------------------------------------------------------------
+
+```
+
+```{r}
+#| label: data_load_vars
+### Variables
+
+.data_date <- "2024-02-29"
+
+# Replace with the desired filename, date should be included in filename.
+.scr_name <- paste("Nurture_U_scr_", .data_date, ".RData", sep = "")
+.bb_name <- paste("Nurture_U_bb_", .data_date, ".RData", sep = "")
+.cbt_name <- paste("Nurture_U_cbt_", .data_date, ".RData", sep = "")
+.rw_name <- paste("Nurture_U_rw_", .data_date, ".RData", sep = "")
+# Replace with the desired file path to save in. Ensure the path ends in "/".
+.file_path <- Sys.getenv("nurture_u_data_loc")
+
+```
+
+## Reducing Worry
+
+```{r}
+#| label: rw_load_1
+#| output: false
+
+# This loads Reducing Worry project data from file.
+#   And then prints the timestamp of the data extraction.
+
+# rm() removes any data currently in memory.
+#   This ensures that no issues involving similar named crfs 
+#   getting merged accidentally.
+rm(list = ls())
+
+# load() loads the project data into memory.
+#   paste() combines the file path and file name into a single string.
+load(paste(.file_path,
+           .rw_name,
+           sep=""))
+
+# 
+paste("Project data extracted at",
+      when,
+      sep = " ")
+rm(when)
+
+# Creates a list of CRFs. This allows for functions to be applied to all CRFs at once if needed.
+.dfs <- Filter(function(x) is(x, "data.frame"), mget(ls())) 
+names(.dfs) <- set_names(ls(all.names = FALSE))
+
+# The following filters out duplicate entries from the CRF data.
+.df_list <- .dfs %>% 
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dup",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dev",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  sapply(function(x) mutate(x,
+                            record_id = str_split_i(x$record_id,
+                                                  pattern = "_",
+                                                  i = 2))) 
+
+names(.df_list) <- set_names(ls(all.names = FALSE))
+list2env(.df_list,
+         envir = .GlobalEnv)
+
+```
+
+### Change of Participant Status
+
+```{r}
+#| label: rw_cos_set_up
+
+# Selects necessary fields from Contact Details CRF.
+.contact_selection <- contact_details %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "screening_id",
+           "cont_timestamp",
+           ends_with("_complete")))
+
+.cos_selection <- withdrawal %>%
+  filter(redcap_event_name == "Unscheduled Event") %>%
+  filter(is.na(redcap_repeat_instrument)) %>%
+  filter(!is.na(with_rum_ch_dt)) %>%
+  select(c("record_id",
+           "with_rum_ch_dt",
+           "with_rum_type",
+           "with_rum_reason",
+           "with_rum_event_name",
+           "with_rum_timepoint",
+           "with_rum_ae_sae_num",
+           "with_rum_result",
+           "with_rum_com_name",
+           "with_rum_com_dt",
+           "withdrawal_complete"))
+
+# Selects necessary fields from Randomisation CRF.
+.randomisation_selection <- randomisation %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "rando_allocation",
+           "rando_dt",
+           ends_with("_complete")))
+
+.rw_cos_data <- .cos_selection %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+.rw_cos_data[with_rum_type == "Stop using internet/app intervention"] <- .rw_cos_data[
+  with_rum_type == "Stop using internet/app intervention"][, with_rum_type:= "stop_int"]
+
+.rw_cos_data[with_rum_type == "Withdraw from the trial completely (including all assessments)"] <- .rw_cos_data[
+  with_rum_type == "Withdraw from the trial completely (including all assessments)"][, with_rum_type := "full_with"]
+
+```
+
+```{r}
+#| label: tbl-rw_cos_summary
+#| tbl-cap: "Change in Participation Status in Reducing Worry"
+
+.cos_table_rows <- data.frame(with_rum_timepoint = c(
+  "During baseline",
+  "Between baseline to next follow-up assessment",
+  "During follow-up assessment",
+  "Between follow-up assessment and final follow up assessment",
+  "During final follow-up assessment",
+  "Other",
+  NA))
+
+.rw_cos_table_data <- .rw_cos_data %>%
+  CTUReportTool::ct_by_var(
+    col_var = with_rum_type,
+    row_var = with_rum_timepoint
+  ) %>%
+  merge(.cos_table_rows,
+        by = "with_rum_timepoint",
+        all.y = TRUE) %>%
+  replace_na(list(full_with = 0,
+                  stop_int = 0))
+  
+.rw_cos_table_data <- .rw_cos_table_data[
+  match(c("During baseline",
+          "Between baseline to next follow-up assessment",
+          "During follow-up assessment",
+          "Between follow-up assessment and final follow up assessment",
+          "During final follow-up assessment",
+          "Other",
+          NA),
+        .rw_cos_table_data$with_rum_timepoint),] %>%
+  replace_na(list(with_rum_timepoint = "Missing"))  %>%
+  janitor::adorn_totals()
+
+.rw_cos_tbl <- .rw_cos_table_data %>%
+  mutate(full_with = full_with/nrow(.contact_selection)) %>%
+  mutate(stop_int = stop_int/nrow(.contact_selection)) %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front",
+                    ns = .rw_cos_table_data) 
+
+row.names(.rw_cos_tbl) <- NULL
+
+.rw_cos_tbl %>%
+  kbl(col.names = c("Timepoint of status change",
+                    "Withdrew Completely",
+                    "Stopped Intervention"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c("Percentages are calulated from the number of participants who started baseline."),
+               "none")
+
+```
+
+### Safety
+
+#### AEs
+
+```{r}
+#| label: rw_ae_set_up
+
+.rw_ae_data <- ae %>%
+  filter(redcap_event_name == "Unscheduled Event") %>%
+  filter(redcap_repeat_instrument == "AE") %>%
+  filter(!is.na(ae_rum_start_dt)) %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+.rw_ae_data[rando_allocation == "Usual care"] <- .rw_ae_data[rando_allocation == "Usual care"][, rando_allocation := "Group A"]
+
+.rw_ae_data[rando_allocation == "Usual care plus unguided i-RFCBT"] <- .rw_ae_data[rando_allocation == "Usual care plus unguided i-RFCBT"][, rando_allocation := "Group B"]
+
+```
+
+```{r}
+#| label: rw_ae_line_listing
+#| tbl-cap: "Line listing of AEs in Internet rw"
+
+.rw_ae_data %>%
+  select(c("record_id",
+           "rando_allocation",
+           "ae_rum_event_name",
+           "ae_rum_relation",
+           "ae_rum_expect",
+           "ae_complete")) %>%
+  kbl(col.names = c("AE Number",
+                    "Allocated group",
+                    "AE event details",
+                    "Relatedness to intervention",
+                    "AE Expected",
+                    "AE CRF status")) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE)
+
+```
+
+#### SAEs
+
+```{r}
+#| label: rw_sae_set_up
+
+.rw_sae_data <- sae %>%
+  filter(redcap_event_name == "Unscheduled Event") %>%
+  filter(redcap_repeat_instrument == "SAE") %>%
+  filter(!is.na(sae_rum_onset_dt)) %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+.rw_sae_data[rando_allocation == "Usual care"] <- .rw_sae_data[rando_allocation == "Usual care"][, rando_allocation := "Group A"]
+
+.rw_sae_data[rando_allocation == "Usual care plus unguided i-RFCBT"] <- .rw_sae_data[rando_allocation == "Usual care plus unguided i-RFCBT"][, rando_allocation := "Group B"]
+
+```
+
+```{r}
+#| label: rw_sae_line_listing
+#| tbl-cap: "Line listing of AEs in Internet rw"
+
+.rw_sae_data %>%
+  select(c("record_id",
+           "rando_allocation",
+           "sae_rum_event",
+           "sae_rum_category",
+           "sae_rum_intens",
+           "sae_rum_relat",
+           "sae_rum_expect",
+           "sae_rum_outcome",
+           "sae_complete")) %>%
+  kbl(col.names = c("SAE Number",
+                    "Allocated group",
+                    "SAE event details",
+                    "SAE category",
+                    "SAE severity",
+                    "Relatedness to intervention",
+                    "SAE expectedness",
+                    "SAE Outcome",
+                    "SAE CRF status")) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica")# %>%
+#  column_spec(1,
+#              bold = TRUE,
+#              border_right = TRUE)
+
+```
+
+## Internet CBT
+
+```{r}
+#| label: cbt_load_1
+#| output: false
+
+# This loads Internet CBT project data from file.
+#   And then prints the timestamp of the data extraction.
+
+# rm() removes any data currently in memory.
+#   This ensures that no issues involving similar named crfs 
+#   getting merged accidentally.
+rm(list = ls())
+
+# load() loads the project data into memory.
+#   paste() combines the file path and file name into a single string.
+load(paste(.file_path,
+           .cbt_name,
+           sep=""))
+
+# 
+paste("Project data extracted at",
+      when,
+      sep = " ")
+rm(when)
+
+# Creates a list of CRFs. This allows for functions to be applied to all CRFs at once if needed.
+.dfs <- Filter(function(x) is(x, "data.frame"), mget(ls())) 
+names(.dfs) <- set_names(ls(all.names = FALSE))
+
+# The following filters out duplicate entries from the CRF data.
+.df_list <- .dfs %>% 
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dup",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dev",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("NA_197",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  sapply(function(x) mutate(x,
+                            record_id = str_split_i(x$record_id,
+                                                  pattern = "_",
+                                                  i = 2))) 
+
+names(.df_list) <- set_names(ls(all.names = FALSE))
+list2env(.df_list,
+         envir = .GlobalEnv)
+
+```
+
+### Change of Participant Status
+
+```{r}
+#| label: cbt_cos_set_up
+
+# Selects necessary fields from Contact Details CRF.
+.contact_selection <- contact_details %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "screening_id",
+           "cont_timestamp",
+           ends_with("_complete")))
+
+.cos_selection <- withdrawal %>%
+  filter(redcap_event_name == "Unschedule Event") %>%
+  filter(is.na(redcap_repeat_instrument)) %>%
+  filter(!is.na(with_acu_ch_dt)) %>%
+  select(c("record_id",
+           "with_acu_ch_dt",
+           "with_acu_type",
+           "with_acu_reason",
+           "with_acu_event_name",
+           "with_acu_timepoint",
+           "with_acu_ae_sae_num",
+           "with_acu_result",
+           "with_acu_com_name",
+           "with_acu_com_dt",
+           "withdrawal_complete"))
+
+# Selects necessary fields from Randomisation CRF.
+.randomisation_selection <- randomisation %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "rando_allocation",
+           "rando_dt",
+           ends_with("_complete")))
+
+.cbt_cos_data <- .cos_selection %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+.cbt_cos_data[with_acu_type == "Stop using internet-CBT intervention"] <- .cbt_cos_data[
+  with_acu_type == "Stop using internet-CBT intervention"][, with_acu_type:= "stop_int"]
+
+.cbt_cos_data[with_acu_type == "Withdraw from the trial completely (including all assessments)"] <- .cbt_cos_data[
+  with_acu_type == "Withdraw from the trial completely (including all assessments)"][, with_acu_type := "full_with"]
+
+```
+
+```{r}
+#| label: tbl-cbt_cos_summary
+#| tbl-cap: "Change in Participation Status in Internet CBT"
+ 
+.cos_table_rows <- data.frame(with_acu_timepoint = c(
+  "During baseline",
+  "Between baseline to final follow-up assessment",
+  "During final follow-up assessment",
+  "Other (Specify)",
+  NA))
+
+.cbt_cos_table_data <- .cbt_cos_data %>%
+  CTUReportTool::ct_by_var(
+    col_var = with_acu_type,
+    row_var = with_acu_timepoint
+  ) %>%
+  merge(.cos_table_rows,
+        by = "with_acu_timepoint",
+        all.y = TRUE) %>%
+  replace_na(list(full_with = 0,
+                  stop_int = 0))
+  
+.cbt_cos_table_data <- .cbt_cos_table_data[
+  match(c("During baseline",
+          "Between baseline to final follow-up assessment",
+          "During final follow-up assessment",
+          "Other (specify)",
+          NA),
+        .cbt_cos_table_data$with_acu_timepoint),] %>%
+  replace_na(list(with_acu_timepoint = "Missing"))  %>%
+  janitor::adorn_totals()
+
+.cbt_cos_tbl <- .cbt_cos_table_data %>%
+  mutate(full_with = full_with/nrow(.contact_selection)) %>%
+  mutate(stop_int = stop_int/nrow(.contact_selection)) %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front",
+                    ns = .cbt_cos_table_data) 
+
+row.names(.cbt_cos_tbl) <- NULL
+
+.cbt_cos_tbl %>%
+  kbl(col.names = c("Timepoint of status change",
+                    "Withdrew Completely",
+                    "Stopped Intervention"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c("Percentages are calulated from the number of participants who started baseline."),
+               "none")
+
+```
+
+### Safety
+
+#### AEs
+
+```{r}
+#| label: cbt_ae_set_up
+
+.cbt_ae_data <- ae %>%
+  filter(redcap_event_name == "Unschedule Event") %>%
+  filter(redcap_repeat_instrument == "AE") %>%
+  filter(!is.na(ae_acu_start_dt)) %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+.cbt_ae_data[rando_allocation == "Guided online CBT"] <- .cbt_ae_data[rando_allocation == "Guided online CBT"][, rando_allocation := "Group A"]
+
+.cbt_ae_data[rando_allocation == "Unguided online CBT"] <- .cbt_ae_data[rando_allocation == "Unguided online CBT"][, rando_allocation := "Group B"]
+
+```
+
+```{r}
+#| label: cbt_ae_line_listing
+#| tbl-cap: "Line listing of AEs in Internet CBT"
+
+.cbt_ae_data %>%
+  select(c("record_id",
+           "rando_allocation",
+           "ae_acu_event_name",
+           "ae_acu_relation",
+           "ae_acu_expect",
+           "ae_complete")) %>%
+  kbl(col.names = c("AE Number",
+                    "Allocated group",
+                    "AE event details",
+                    "Relatedness to intervention",
+                    "AE Expected",
+                    "AE CRF status")) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE)
+
+```
+
+#### SAEs
+
+```{r}
+#| label: cbt_sae_set_up
+
+.cbt_sae_data <- sae %>%
+  filter(redcap_event_name == "Unschedule Event") %>%
+  filter(redcap_repeat_instrument == "SAE") %>%
+  filter(!is.na(sae_acu_onset_dt)) %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+.cbt_sae_data[rando_allocation == "Guided online CBT"] <- .cbt_sae_data[rando_allocation == "Guided online CBT"][, rando_allocation := "Group A"]
+
+.cbt_sae_data[rando_allocation == "Unguided online CBT"] <- .cbt_sae_data[rando_allocation == "Unguided online CBT"][, rando_allocation := "Group B"]
+
+```
+
+```{r}
+#| label: cbt_sae_line_listing
+#| tbl-cap: "Line listing of AEs in Internet CBT"
+
+.cbt_sae_data %>%
+  select(c("record_id",
+           "rando_allocation",
+           "sae_acu_event",
+           "sae_acu_category",
+           "sae_acu_intens",
+           "sae_acu_relat",
+           "sae_acu_expect",
+           "sae_acu_outcome",
+           "sae_complete")) %>%
+  kbl(col.names = c("SAE Number",
+                    "Allocated group",
+                    "SAE event details",
+                    "SAE category",
+                    "SAE severity",
+                    "Relatedness to intervention",
+                    "SAE expectedness",
+                    "SAE Outcome",
+                    "SAE CRF status")) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE)
+
+```
+
+## Bounce Back
+
+```{r}
+#| label: bb_load_1
+#| output: false
+
+# This loads Bounce Back project data from file.
+#   And then prints the timestamp of the data extraction.
+
+# rm() removes any data currently in memory.
+#   This ensures that no issues involving similar named crfs 
+#   getting merged accidentally.
+rm(list = ls())
+
+# load() loads the project data into memory.
+#   paste() combines the file path and file name into a single string.
+load(paste(.file_path,
+           .bb_name,
+           sep=""))
+
+# 
+paste("Project data extracted at",
+      when,
+      sep = " ")
+rm(when)
+
+# Creates a list of CRFs. This allows for functions to be applied to all CRFs at once if needed.
+.dfs <- Filter(function(x) is(x, "data.frame"), mget(ls())) 
+names(.dfs) <- set_names(ls(all.names = FALSE))
+
+# The following filters out duplicate entries from the CRF data.
+.df_list <- .dfs %>% 
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dup",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  lapply(function(x) filter(x,
+                            !(record_id %in% grep("Dev",
+                                                  record_id,
+                                                  value = TRUE)))) %>%
+  sapply(function(x) mutate(x,
+                            record_id = str_split_i(x$record_id,
+                                                  pattern = "_",
+                                                  i = 2))) 
+
+names(.df_list) <- set_names(ls(all.names = FALSE))
+list2env(.df_list,
+         envir = .GlobalEnv)
+
+```
+
+### Change of Participant Status
+
+```{r}
+#| label: bb_cos_set_up
+
+# Selects necessary fields from Contact Details CRF.
+.contact_selection <- contact_details %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "screening_id",
+           "cont_timestamp",
+           ends_with("_complete")))
+
+.cos_selection <- withdrawal %>%
+  filter(redcap_event_name == "Unschedule Event") %>%
+  filter(is.na(redcap_repeat_instrument)) %>%
+  filter(!is.na(with_fea_ch_dt)) %>%
+  select(c("record_id",
+           "with_fea_ch_dt",
+           "with_fea_type",
+           "with_fea_reason",
+           "with_fea_event_name",
+           "with_fea_timepoint",
+           "with_fea_ae_sae_num",
+           "with_fea_result",
+           "with_fea_com_name",
+           "with_fea_com_dt",
+           "withdrawal_complete"))
+
+# Selects necessary fields from Randomisation CRF.
+.randomisation_selection <- randomisation %>%
+  filter(redcap_event_name == "Baseline") %>%
+  select(c("record_id",
+           "rando_allocation",
+           "rando_dt",
+           ends_with("_complete")))
+
+.bb_cos_data <- .cos_selection %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+.bb_cos_data[with_fea_type == "Stop using the sbLICBT intervention"] <- .bb_cos_data[
+  with_fea_type == "Stop using the sbLICBT intervention"][, with_fea_type:= "stop_int"]
+
+.bb_cos_data[with_fea_type == "Withdraw from the trial completely (including all assessments)"] <- .bb_cos_data[
+  with_fea_type == "Withdraw from the trial completely (including all assessments)"][, with_fea_type := "full_with"]
+
+```
+
+```{r}
+#| label: tbl-bb_cos_summary
+#| tbl-cap: "Change in Participation Status in Bounce Back"
+
+.cos_table_rows <- data.frame(with_fea_timepoint = c(
+  "During baseline",
+  "Between baseline to next follow-up assessment",
+  "During follow-up assessment",
+  "Between follow-up assessment and final follow up assessment",
+  "During final follow-up assessment",
+  "Other",
+  NA))
+
+.bb_cos_table_data <- .bb_cos_data %>%
+  CTUReportTool::ct_by_var(
+    col_var = with_fea_type,
+    row_var = with_fea_timepoint
+  ) %>%
+  merge(.cos_table_rows,
+        by = "with_fea_timepoint",
+        all.y = TRUE) %>%
+  replace_na(list(full_with = 0,
+                  stop_int = 0))
+
+if (("stop_int" %in% colnames(.bb_cos_table_data)) == FALSE) {
+   .bb_cos_table_data <- .bb_cos_table_data %>%
+     mutate(stop_int = 0)
+}
+
+.bb_cos_table_data <- .bb_cos_table_data[
+  match(c("During baseline",
+          "Between baseline to next follow-up assessment",
+          "During follow-up assessment",
+          "Between follow-up assessment and final follow up assessment",
+          "During final follow-up assessment",
+          "Other",
+          NA),
+        .bb_cos_table_data$with_fea_timepoint),] %>%
+  replace_na(list(with_fea_timepoint = "Missing"))  %>%
+  janitor::adorn_totals()
+
+.bb_cos_tbl <- .bb_cos_table_data %>%
+  mutate(full_with = full_with/nrow(.contact_selection)) %>%
+  mutate(stop_int = stop_int/nrow(.contact_selection)) %>%
+  janitor::adorn_pct_formatting(digits = 1) %>%
+  janitor::adorn_ns(position = "front",
+                    ns = .bb_cos_table_data) 
+
+row.names(.bb_cos_tbl) <- NULL
+
+.bb_cos_tbl %>%
+  kbl(col.names = c("Timepoint of status change",
+                    "Withdrew Completely",
+                    "Stopped Intervention"),
+      row_names = NULL) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE) %>%
+  add_footnote(c("Percentages are calulated from the number of participants who started baseline."),
+               "none")
+
+```
+
+
+
+### Safety
+
+#### AEs
+
+```{r}
+#| label: bb_ae_set_up
+
+.bb_ae_data <- ae %>%
+  filter(redcap_event_name == "Unschedule Event") %>%
+  filter(redcap_repeat_instrument == "AE") %>%
+  filter(!is.na(ae_fea_start_dt)) %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+.bb_ae_data[rando_allocation == "Waiting list control (6 weeks)"] <- .bb_ae_data[rando_allocation == "Waiting list control (6 weeks)"][, rando_allocation := "Group A"]
+
+.bb_ae_data[rando_allocation == "Strengths based guided self help immediately"] <- .bb_ae_data[rando_allocation == "Strengths based guided self help immediately"][, rando_allocation := "Group B"]
+
+```
+
+```{r}
+#| label: bb_ae_line_listing
+#| tbl-cap: "Line listing of AEs in Bounce Back"
+
+.bb_ae_data %>%
+  select(c("ae_fea_number",
+           "rando_allocation",
+           "ae_fea_event_name",
+           "ae_fea_relation",
+           "ae_fea_expect",
+           "ae_complete")) %>%
+  kbl(col.names = c("AE Number",
+                    "Allocated group",
+                    "AE event details",
+                    "Relatedness to intervention",
+                    "AE Expected",
+                    "AE CRF status")) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica") %>%
+  column_spec(1,
+              bold = TRUE,
+              border_right = TRUE)
+
+```
+
+#### SAEs
+
+```{r}
+#| label: bb_sae_set_up
+
+.bb_sae_data <- sae %>%
+  filter(redcap_event_name == "Unschedule Event") %>%
+  filter(redcap_repeat_instrument == "SAE") %>%
+  filter(!is.na(sae_fea_onset_dt)) %>%
+  merge(.randomisation_selection,
+        by = "record_id",
+        all.x = TRUE) %>%
+  setDT()
+
+.bb_sae_data[rando_allocation == "Waiting list control (6 weeks)"] <- .bb_sae_data[rando_allocation == "Waiting list control (6 weeks)"][, rando_allocation := "Group A"]
+
+.bb_sae_data[rando_allocation == "Strengths based guided self help immediately"] <- .bb_sae_data[rando_allocation == "Strengths based guided self help immediately"][, rando_allocation := "Group B"]
+
+```
+
+```{r}
+#| label: bb_sae_line_listing
+#| tbl-cap: "Line listing of AEs in Bounce Back"
+
+.bb_sae_data %>%
+  select(c("sae_fea_number",
+           "rando_allocation",
+           "sae_fea_event",
+           "sae_fea_category",
+           "sae_fea_intens",
+           "sae_fea_relat",
+           "sae_fea_expect",
+           "sae_fea_outcome",
+           "sae_complete")) %>%
+  kbl(col.names = c("SAE Number",
+                    "Allocated group",
+                    "SAE event details",
+                    "SAE category",
+                    "SAE severity",
+                    "Relatedness to intervention",
+                    "SAE expectedness",
+                    "SAE Outcome",
+                    "SAE CRF status")) %>%
+  kableExtra::kable_paper(c("hover",
+                            "condensed"),
+                          full_width = FALSE,
+                          html_font = "Helvetica")# %>%
+#  column_spec(1,
+#              bold = TRUE,
+#              border_right = TRUE)
+
+```

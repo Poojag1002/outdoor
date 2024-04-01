@@ -1,0 +1,60 @@
+---
+title: "Bounce Back DMEC Report"
+date-modified: today
+embed-resources: true
+format: html
+prefer-html: true
+execute:
+  echo: false
+  warning: false
+tbl-cap-location: top
+toc: true
+toc-depth: 3
+toc-title: "Reports:"
+title-block-banner: true
+fig-asp: 0.618
+fig-width: 6
+fig-align: center
+out-width: "70%"
+---
+
+```{r}
+#| label: library_load
+#| output: false
+
+library(tidyREDCap)
+library(tidyverse)
+library(expss)
+library(knitr)
+library(kableExtra)
+library(consort)
+library(Hmisc)
+library(data.table)
+# -----------------------------------------------------------------
+# Can be commented out/removed if this is already installed.
+devtools::install_github("ExeCTU/CT_R_Package",
+                         ref = "main",
+                         auth_token = Sys.getenv("github_token")                 
+                        )
+# -----------------------------------------------------------------
+
+```
+
+```{r}
+
+### Variables
+
+.data_date <- "2024-01-15"
+
+# Replace with the desired filename, date should be included in filename.
+.scr_name <- paste("Nurture_U_scr_", .data_date, ".RData", sep = "")
+.bb_name <- paste("Nurture_U_bb_", .data_date, ".RData", sep = "")
+.cbt_name <- paste("Nurture_U_cbt_", .data_date, ".RData", sep = "")
+.rw_name <- paste("Nurture_U_rw_", .data_date, ".RData", sep = "")
+# Replace with the desired file path to save in. Ensure the path ends in "/".
+.file_path <- Sys.getenv("nurture_u_data_loc")
+
+```
+
+# CONSORT Diagram
+

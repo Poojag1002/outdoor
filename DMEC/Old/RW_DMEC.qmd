@@ -1,0 +1,883 @@
+---
+title: "Reducing Worry DMEC (Pooled)"
+---
+
+## CONSORT Diagram
+
+```{r}
+#| label: data_import_scr
+#| output: false
+
+library(tidyREDCap)
+library(tidyverse)
+library(expss)
+
+rm(list = ls()) # Ensures workspace is clear before starting.
+
+# Imports data from REDCap using API (Re-run this section to refresh the data).
+tidyREDCap::import_instruments( # Tells R to import all instruments/CRFs used in the project.
+  "https://rc.ctu.exeter.ac.uk/api/", # URL of the site to import from.
+  Sys.getenv("nurture_u_key"), # API Token.
+  record_id = "screening_id", # Tells R the label of the Record ID on REDCap.
+  drop_blank = FALSE
+)
+```
+
+```{r}
+#| label: consort_data_scr
+#| output: false
+
+library(consort)
+.N <- nrow(nurtureu_introduction)
+
+
+.trialno <- nurtureu_introduction$screening_id
+
+.exc1 <- rep(NA, .N)
+.exc1 <- ifelse(nurtureu_introduction$intro_ineligible == 1, NA, "Did not meet basic eligibility criteria")
+
+.induc1 <- rep(NA, .N)
+.induc1[is.na(.exc1)] <- .trialno[is.na(.exc1)]
+
+.exc2 <- rep(NA, .N)
+.exc2[nurture_u_consent_for_screening$nurture_u_consent_for_screening_complete == "Incomplete"] <- "Incomplete" 
+
+.induc2 <- rep(NA, .N)
+.induc2[is.na(.exc2)] <- .trialno[is.na(.exc2)]
+
+.exc3 <- rep(NA, .N)
+.exc3[grepl("Incomplete", lidas_adapted$lidas_adapted_complete, ignore.case = TRUE)] <- "Incomplete"
+.exc3[grepl("Deviat", .trialno, ignore.case = TRUE)] <- "Deviated Participant*"
+.exc3[is.na(.exc3)] <- ifelse(consent_for_bounce_back_trial$consent_for_bounce_back_trial_complete[is.na(.exc3)] == "Incomplete" &
+         consent_for_internetcbt_trial$consent_for_internetcbt_trial_complete[is.na(.exc3)] == "Incomplete" &
+         consent_for_reduce_worry_trial$consent_for_reduce_worry_trial_complete[is.na(.exc3)] == "Incomplete", 
+         "Eligible but did not consent", .exc3[is.na(.exc3)])
+.exc3[!grepl("Incomplete", ineligible$ineligible_complete, ignore.case = TRUE)] <- "Ineligible"
+.exc3[grepl("Duplicated", .trialno, ignore.case = TRUE)] <- "Duplicated participant"
+
+.induc3 <- rep(NA, .N)
+.induc3[is.na(.exc3)] <- .trialno[is.na(.exc3)]
+
+.arm <- rep(NA, .N)
+.arm[!is.na(.induc3) & (consent_for_bounce_back_trial$consent_for_bounce_back_trial_complete == "Complete")] <- "Bounce Back"
+.arm[!is.na(.induc3) & (consent_for_internetcbt_trial$consent_for_internetcbt_trial_complete == "Complete")] <- "Internet CBT"
+.arm[!is.na(.induc3) & (consent_for_reduce_worry_trial$consent_for_reduce_worry_trial_complete == "Complete")] <- "Reducing Worry"
+
+.phq9 <- rep(NA, .N)
+.phq9[!is.na(.induc3)] <- phq9$phq_9_total[!is.na(.induc3)]
+
+.gad7 <- rep(NA, .N)
+.gad7[!is.na(.induc3)] <- gad7$gad_7_total[!is.na(.induc3)]
+
+.lidas <- rep(NA, .N)
+.lidas[!is.na(.induc3)] <- lidas_adapted$lidas_meet_past_mde[!is.na(.induc3)]
+
+.pswq <- rep(NA, .N)
+.pswq[!is.na(.induc3)] <- shortform_penn_state_worry_questionnaire$pswq_8_total[!is.na(.induc3)]
+
+.brood <- rep(NA, .N)
+.brood[!is.na(.induc3)] <- item_brooding_scale$bro_5_total[!is.na(.induc3)]
+
+#.pri_out <- data.frame(.induc3, .arm, .phq9, .gad7, .lidas)
+
+.df_con <- data.frame(.trialno, .exc1, .induc1, .exc2, .induc2, .exc3, .induc3, .arm, .phq9, .gad7, .lidas, .brood, .pswq)
+
+```
+
+```{r}
+#| label: data_import_wor_1
+#| output: false
+
+library(tidyREDCap)
+library(tidyverse)
+library(expss)
+
+rm(list = ls())
+
+# Imports data from REDCap using API (Re-run this section to refresh the data).
+tidyREDCap::import_instruments( # Tells R to import all instruments/CRFs used in the project.
+  "https://rc.ctu.exeter.ac.uk/api/", # URL of the site to import from.
+  Sys.getenv("reduce_worry_key"), # API Token.
+  record_id = "record_id", # Tells R the label of the Record ID on REDCap.
+  first_record_id = "NR_1",
+  drop_blank = FALSE
+)
+
+# The following creates a list of CRF data frames, this allows for a filter to be applied to each CRF at once.
+.dfs <- Filter(function(x) is(x, "data.frame"), mget(ls())) # Creates a list of CRFs. This allows for functions to be applied to all CRFs at once if needed.
+names(.dfs) <- set_names(ls(all.names = FALSE))
+
+#.df_list <- list(academic_grades_selfreport, brief_resilience_scale, brooding_scale2_items, change_in_habit_applied_to_problemsolving, change_in_habit_applied_to_worry_61f68e, contact_details, demographics, imported_fields, negative_experience_measure, perceived_stress_scale, phq2_gad2, problem_clarification_819b84, pssi, randomisation, selfcompassion_scaleshort_form, selfefficacymastery, stress, trial_management_crf, use_of_cognitive_and_behavioural_skills, use_of_services_treatment_received_nhs, wemwbs, withdrawal, wsas)
+
+```
+
+```{r}
+#| label: rand_alloc
+#| output: false
+
+.rand_choice <- na.omit(randomisation$rando_allocation)[!duplicated(randomisation$rando_allocation)]
+
+.arm_a <- .rand_choice[1]
+.arm_b <- .rand_choice[2]
+
+```
+
+```{r}
+#| label: consort_data_wor
+#| output: false
+
+# Gives number of participants.
+.N <- nrow(filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE)))
+
+# Retrieves both record and screening ID for each participant.
+.trialno_wor <- filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$record_id
+.scr_id <- select(filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE)), "screening_id" , "record_id")
+colnames(.scr_id) <- c(".trialno", ".trialno_wor")
+
+# Finds participants who have not completed baseline and their current status.
+.rando_dt <- drop_all_labels(filter(randomisation, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$rando_dt) 
+.rando_dt[is.na(.rando_dt)] <- Sys.Date()
+
+
+.exc1_wor <- rep(NA, .N)
+.exc1_wor[filter(randomisation, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$randomisation_complete == "Incomplete" & difftime(.rando_dt, filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$con_start_dt, units = "days") > 14] <- "Incomplete (blocked)"
+.exc1_wor[filter(randomisation, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$randomisation_complete == "Incomplete" & difftime(.rando_dt, filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$con_start_dt, units = "days") <= 14] <- "Incomplete (awaiting data entry)"
+
+# List of participants who have finished Baseline.
+.induc1_wor <- rep(NA, .N)
+.induc1_wor[is.na(.exc1_wor)] <- .scr_id$.trialno_wor[is.na(.exc1_wor)]
+.induc1_wor <- as.data.frame(.induc1_wor)
+
+# Identifies which arm each participant has been allocated to.
+.arm_wor <- rep(NA, .N)
+.arm_wor[!is.na(.induc1_wor)] <- filter(randomisation, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$rando_allocation
+.arm_wor[!is.na(.induc1_wor)] <- ifelse(grepl(.arm_a,.arm_wor[!is.na(.arm_wor)]), "Arm A", "Arm B")
+
+# Weekly Data
+colnames(.induc1_wor) <- "record_id"
+.wk_withdraw <- filter(withdrawal,grepl("Unschedule Event", redcap_event_name, ignore.case = TRUE) & withdrawal_complete == "Complete" & with_rum_timepoint == "Between baseline to next follow-up assessment")
+.wk_withdraw <- merge(.induc1_wor, select(.wk_withdraw, "record_id", "with_rum_ch_dt"), by = "record_id", all = TRUE)
+.wk_withdraw <- inner_join(.induc1_wor, .wk_withdraw, by = "record_id", multiple = "any")
+.wk_withdraw <- mutate(.wk_withdraw, .wk_comp = NA)
+
+.wk_data <- lapply (1 : 9, function (x)  data.frame(.wk_withdraw))
+.wk_dfs <- list(phq2_gad2, stress, use_of_cognitive_and_behavioural_skills, change_in_habit_applied_to_worry_61f68e ,change_in_habit_applied_to_problemsolving,
+            selfcompassion_scaleshort_form, brooding_scale2_items, selfefficacymastery, problem_clarification_819b84)
+
+  
+for (i in seq(1,8)) {
+  for (j in seq(1,length(.wk_dfs))) {
+    .temp_data1 <- merge(.wk_data[[i]][1:2], select(filter(as.data.frame(.wk_dfs[j]), grepl(as.character(i), redcap_event_name, ignore.case = TRUE)), "record_id", colnames(as.data.frame(.wk_dfs[j])[ncol(as.data.frame(.wk_dfs[j]))])), by = "record_id", all = TRUE)
+    .temp_data1 <- inner_join(.wk_data[[i]], .temp_data1, by = "record_id", multiple = "any")
+    .temp_data1[ncol(.temp_data1)][.temp_data1[ncol(.temp_data1)] == "Incomplete"] <- NA 
+    .temp_data1[ncol(.temp_data1)][is.na(.temp_data1[ncol(.temp_data1)]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(i,i+1)) == 2] <- "Incomplete (overdue)"
+    .temp_data1[ncol(.temp_data1)][is.na(.temp_data1[ncol(.temp_data1)]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(i,i+1)) == 1] <- "Incomplete (awaiting data entry)"
+    .temp_data1[ncol(.temp_data1)][is.na(.temp_data1[ncol(.temp_data1)]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(i,i+1)) == 0] <- "Incomplete (awaiting access)"
+    .temp_data1[ncol(.temp_data1)][.temp_data1[ncol(.temp_data1)] == "Complete"] <- NA
+    .temp_data1[ncol(.temp_data1)][!is.na(.temp_data1[2])] <- "Withdrawn"
+    .wk_data[[i]] <- inner_join(.wk_data[[i]], select(.temp_data1, "record_id", colnames(.temp_data1)[ncol(.temp_data1)]), by = "record_id", multiple = "any")
+    
+  }
+  .wk_data[[i]][3][is.na(.wk_data[[i]][ncol(.wk_data[[i]])])] <- .scr_id$.trialno_wor[is.na(.wk_data[[i]][ncol(.wk_data[[i]])])]
+  .wk_data[[i]][is.na(.wk_data[[i]]["record_id"]),] <- NA
+}
+
+# Finds participants who have not completed the 8 week follow up.
+.exc2_wor <- merge(.induc1_wor, filter(problem_clarification_819b84, grepl("8", redcap_event_name, ignore.case = TRUE)), by = "record_id", all = TRUE) %>%
+  select("record_id", "problem_clarification_819b84_complete")
+.exc2_wor <- inner_join(.induc1_wor, .exc2_wor, by = "record_id", multiple = "any")
+.exc2_wor[2][.exc2_wor[2] == "Incomplete"] <- NA
+.exc2_wor[2][is.na(.exc2_wor[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(8,9)) == 2] <- "Incomplete (overdue)"
+.exc2_wor[2][is.na(.exc2_wor[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(8,9)) == 1] <- "Incomplete (awaiting data entry)"
+.exc2_wor[2][is.na(.exc2_wor[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(8,9)) == 0] <- "Incomplete (awaiting access)"
+.exc2_wor[2][.exc2_wor[2] == "Complete"] <- NA
+.exc2_wor[2][is.na(.exc2_wor[1])] <- NA
+.exc2_wor <- .exc2_wor[2]
+
+colnames(.induc1_wor) <- ".induc1_wor"
+colnames(.exc2_wor) <- ".exc2_wor"
+
+# List of participants who have completed 8 week follow up.
+.induc2_wor <- rep(NA, .N)
+.induc2_wor[is.na(.exc2_wor)] <- .trialno_wor[is.na(.exc2_wor)]
+.induc2_wor <- as.data.frame(.induc2_wor)
+.exc2_wor[is.na(.induc1_wor)] <- NA
+
+colnames(.induc2_wor) <- "record_id"
+.exc3_wor <- merge(.induc2_wor, filter(use_of_services_treatment_received_nhs, grepl("3m Followup", redcap_event_name, ignore.case = TRUE)), by = "record_id", all = TRUE) %>%
+  select("record_id", "use_of_services_treatment_received_nhs_complete")
+.exc3_wor <- inner_join(.induc2_wor, .exc3_wor, by = "record_id", multiple = "any")
+.exc3_wor[2][.exc3_wor[2] == "Incomplete"] <- NA
+.exc3_wor[2][is.na(.exc3_wor[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(12,13)) == 2] <- "Incomplete (overdue)"
+.exc3_wor[2][is.na(.exc3_wor[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(12,13)) == 1] <- "Incomplete (awaiting data entry)"
+.exc3_wor[2][is.na(.exc3_wor[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(12,13)) == 0] <- "Incomplete (awaiting access)"
+.exc3_wor[2][.exc3_wor[2] == "Complete"] <- NA
+.exc3_wor[2][is.na(.exc3_wor[1])] <- NA
+.exc3_wor <- .exc3_wor[2]
+
+colnames(.induc2_wor) <- ".induc2_wor"
+colnames(.exc3_wor) <- ".exc3_wor"
+
+.induc3_wor <- rep(NA, .N)
+.induc3_wor[is.na(.exc3_wor)] <- .trialno_wor[is.na(.exc3_wor)]
+.induc3_wor <- as.data.frame(.induc3_wor)
+.exc3_wor[is.na(.induc2_wor)] <- NA
+
+colnames(.induc3_wor) <- "record_id"
+.exc4_wor <- merge(.induc3_wor, filter(use_of_services_treatment_received_nhs_12_month_fu, grepl("12m followup", redcap_event_name, ignore.case = TRUE)), by = "record_id", all = TRUE) %>%
+  select("record_id", "use_of_services_treatment_received_nhs_12_month_fu_complete")
+.exc4_wor <- inner_join(.induc3_wor, .exc4_wor, by = "record_id", multiple = "any")
+.exc4_wor[2][.exc4_wor[2] == "Incomplete"] <- NA
+.exc4_wor[2][is.na(.exc4_wor[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(52,53)) == 2] <- "Incomplete (overdue)"
+.exc4_wor[2][is.na(.exc4_wor[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(52,53)) == 1] <- "Incomplete (awaiting data entry)"
+.exc4_wor[2][is.na(.exc4_wor[2]) & findInterval(difftime(Sys.Date(), .rando_dt, units = "weeks"), c(52,53)) == 0] <- "Incomplete (awaiting access)"
+.exc4_wor[2][.exc4_wor[2] == "Complete"] <- NA
+.exc4_wor[2][is.na(.exc4_wor[1])] <- NA
+.exc4_wor <- .exc4_wor[2]
+
+colnames(.induc3_wor) <- ".induc3_wor"
+colnames(.exc4_wor) <- ".exc4_wor"
+
+.induc4_wor <- rep(NA, .N)
+.induc4_wor[is.na(.exc4_wor)] <- .scr_id$.trialno_wor[is.na(.exc4_wor)]
+.induc4_wor <- as.data.frame(.induc4_wor)
+.exc4_wor[is.na(.induc3_wor)] <- NA
+
+.df <- data.frame(.scr_id, .exc1_wor, .induc1_wor, .arm_wor, .exc2_wor, .induc2_wor, .exc3_wor, .induc3_wor, .exc4_wor, .induc4_wor)
+.df_wor <- merge(.df_con, .df, by = ".trialno", all = TRUE)
+
+.df_wor$.arm[.df_wor$.arm == "Reducing Worry"] <- NA
+.df_wor$.arm[.df_wor$.arm == "Bounce Back" | .df_wor$.arm == "Internet CBT"] <- "Consented to other NURTURE-U Trial"
+
+```
+
+```{r}
+#| label: consort_plot
+#| output: false
+
+.out_wor <- consort_plot(data = .df_wor,
+                    orders = c(.trialno = "Population",
+                               .exc1    = "Excluded",
+                               .induc1 = "Start of Screening",
+                               .exc2    = "Excluded",
+                               .induc2 = "Consented to Screening",
+                               .exc3    = "Excluded",
+                               .induc3 = "Participant consented to Trial",
+                               .arm     = "Excluded",
+                               .trialno_wor = "Start of Baseline",
+                               .exc1_wor = "Excluded",
+                               .arm_wor = "Randomised Participant",
+                               .exc2_wor = "Excluded",
+                               .induc2_wor = "8 Week Follow Up",
+                               .exc3_wor = "Excluded",
+                               .induc3_wor = "3 Month Follow Up",
+                               .exc4_wor = "Excluded",
+                               .induc4_wor = "12 Month Follow Up"
+                               ),
+                    side_box = c(".exc1", ".exc2", ".exc3", ".arm", ".exc1_wor", ".exc2_wor", ".exc3_wor", ".exc4_wor"),
+                    #allocation = ".arm_wor",
+                    labels = c("1" = "Pre-Screening", "2" = "Screening", 
+                               "5" = "Baseline", "6" = "Randomisation", 
+                               "7" = "Mediator Assessments", "8" = "Follow up Period"),
+                    cex = 0.9)
+
+cat(build_grviz(.out_wor), file = "consort_wor.gv")
+
+```
+
+```{dot}
+//| label: fig-consort_wor
+//| fig-cap: "CONSORT diagram of NURTURE-U Reducing Worry."
+//| file: consort_wor.gv
+```
+
+
+## Monthly Recruitment (Actual vs Expected)
+
+```{r}
+#| label: data_import_wor_2
+#| output: false
+
+library(tidyREDCap)
+library(tidyverse)
+library(expss)
+
+rm(list = ls())
+
+# Imports data from REDCap using API (Re-run this section to refresh the data).
+tidyREDCap::import_instruments( # Tells R to import all instruments/CRFs used in the project.
+  "https://rc.ctu.exeter.ac.uk/api/", # URL of the site to import from.
+  Sys.getenv("reduce_worry_key"), # API Token.
+  record_id = "record_id", # Tells R the label of the Record ID on REDCap.
+  first_record_id = "NR_1"
+)
+
+# The following creates a list of CRF data frames, this allows for a filter to be applied to each CRF at once.
+.dfs <- Filter(function(x) is(x, "data.frame"), mget(ls())) # Creates a list of CRFs. This allows for functions to be applied to all CRFs at once if needed.
+names(.dfs) <- set_names(ls(all.names = FALSE))
+
+#.df_list <- list(academic_grades_selfreport, brief_resilience_scale, brooding_scale2_items, change_in_habit_applied_to_problemsolving, change_in_habit_applied_to_worry_61f68e, contact_details, demographics, imported_fields, negative_experience_measure, perceived_stress_scale, phq2_gad2, problem_clarification_819b84, pssi, randomisation, selfcompassion_scaleshort_form, selfefficacymastery, stress, trial_management_crf, use_of_cognitive_and_behavioural_skills, use_of_services_treatment_received_nhs, wemwbs, withdrawal, wsas)
+
+```
+
+```{r}
+
+# Baseline Data
+
+.trialno_wor <- filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$record_id
+.trialno_wor <- as.data.frame(.trialno_wor)
+colnames(.trialno_wor) <- "record_id"
+
+.base_withdraw <- filter(withdrawal,grepl("Unschedule Event", redcap_event_name, ignore.case = TRUE) & withdrawal_complete == "Complete" & with_rum_timepoint == "During Baseline")
+.base_withdraw <- merge(.trialno_wor, select(.base_withdraw, "record_id", "with_rum_ch_dt"), by = "record_id", all = TRUE)
+.base_withdraw <- inner_join(.trialno_wor, .base_withdraw, by = "record_id", multiple = "any")
+.base_data <- mutate(.base_withdraw, .base_comp = NA)
+
+.base_dfs <- list(contact_details, demographics, wemwbs, wsas, brief_resilience_scale, academic_grades_selfreport, perceived_stress_scale, pssi, negative_experience_measure, use_of_services_treatment_received_nhs, randomisation, imported_fields)
+
+for (j in seq(1,length(.base_dfs))) {
+  .temp_data1 <- merge(.base_data[1:2], select(filter(as.data.frame(.base_dfs[j]), grepl("Baseline", redcap_event_name, ignore.case = TRUE)), "record_id", colnames(as.data.frame(.base_dfs[j])[ncol(as.data.frame(.base_dfs[j]))])), by = "record_id", all = TRUE)
+  .temp_data1 <- inner_join(.base_data, .temp_data1, by = "record_id", multiple = "any")
+  .temp_data1[ncol(.temp_data1)][.temp_data1[ncol(.temp_data1)] == "Incomplete"] <- NA 
+  .temp_data1[ncol(.temp_data1)][is.na(.temp_data1[ncol(.temp_data1)]) & difftime(.rando_dt, filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$con_start_dt, units = "days") > 14] <- "Incomplete (overdue)"
+  .temp_data1[ncol(.temp_data1)][is.na(.temp_data1[ncol(.temp_data1)]) & difftime(.rando_dt, filter(contact_details, grepl("Baseline", redcap_event_name, ignore.case = TRUE))$con_start_dt, units = "days") <= 14] <- "Incomplete (awaiting data entry)"
+  .temp_data1[ncol(.temp_data1)][.temp_data1[ncol(.temp_data1)] == "Complete"] <- NA
+  .temp_data1[ncol(.temp_data1)][!is.na(.temp_data1[2])] <- "Withdrawn"
+  .base_data <- inner_join(.base_data, select(.temp_data1, "record_id", colnames(.temp_data1)[ncol(.temp_data1)]), by = "record_id", multiple = "any")
+}
+.base_data[3][is.na(.base_data[ncol(.base_data)])] <- .trialno_wor[is.na(.base_data[ncol(.base_data)])]
+.base_data[is.na(.base_data["record_id"]),] <- NA
+
+```
+
+```{r}
+#| label: bline_data_comp
+#| output: false
+#| 
+.target_string <- c("Incomplete (overdue)")
+
+#.M <- as.matrix(.base_data)
+#.M[,-(1:3)] <- ifelse(.M[,-(1:3)] == .target_string ,1,0)
+
+is_present <- function(x) {
+  x %in% .target_string 
+}
+
+.base_data_t <- as.data.frame(t(.base_data))
+.base_data_t <- .base_data_t %>% 
+  rowwise() %>% 
+  mutate(num_over = sum(is_present(across(matches(colnames(.base_data_t))))))
+
+.base_comp <- data.frame(crf = colnames(.base_data)[-(1:3)], num_exp = rep(nrow(.base_data),length(.base_data)-3), num_over = .base_data_t$num_over[-(1:3)])
+
+```
+
+```{r}
+#| label: wk_data_comp
+#| output: false
+
+.wk_comp <- lapply (1 : 8, function (x)  data.frame())
+
+.target_string <- c("Incomplete (overdue)")
+
+is_present <- function(x) {
+  x %in% .target_string 
+}
+
+.wk_data_t <- as.data.frame(t(.wk_data[[1]]))
+.wk_data_t <- .wk_data_t %>% 
+  rowwise() %>% 
+  mutate(num_over = sum(is_present(across(matches(colnames(.wk_data_t))))))
+
+.wk_exp_filter <- filter(.wk_data[[1]], !is.na(.wk_data[[1]]$record_id) & (.wk_data[[1]]$problem_clarification_819b84_complete != "Incomplete (awaiting access)" | is.na(.wk_data[[1]]$problem_clarification_819b84_complete)))
+
+.wk_comp[[1]] <- data.frame(crf = colnames(.wk_data[[1]])[-(1:3)], num_exp = rep(nrow(.wk_exp_filter),length(.wk_data[[1]])-3), num_over = .wk_data_t$num_over[-(1:3)])
+
+.wk_comp_total <- .wk_comp[[1]]
+#,length(.wk_data)
+for (i in seq(2,length(.wk_data)-1)) {
+  .wk_data_t <- as.data.frame(t(.wk_data[[i]]))
+  .wk_data_t <- .wk_data_t %>% 
+    rowwise() %>% 
+    mutate(num_over = sum(is_present(across(matches(colnames(.wk_data_t))))))
+
+  .wk_exp_filter <- filter(.wk_data[[i]], !is.na(.wk_data[[i]]$record_id))
+  .wk_exp_filter <- filter(.wk_exp_filter, (.wk_exp_filter$problem_clarification_819b84_complete != "Incomplete (awaiting access)" | is.na(.wk_exp_filter$problem_clarification_819b84_complete)))
+  
+  .wk_comp[[i]] <- data.frame(crf = colnames(.wk_data[[i]])[-(1:3)], num_exp = rep(nrow(.wk_exp_filter),length(.wk_data[[i]])-3), num_over = .wk_data_t$num_over[-(1:3)])
+  
+  .wk_comp_total[2:3] <- .wk_comp_total[2:3] + .wk_comp[[i]][2:3]
+}
+#.wk_exp_filt <- filter(.wk_data[[1]], !is.na(.wk_data[[1]]$record_id) & (.wk_data[[1]]$problem_clarification_819b84_complete != "Incomplete (awaiting access)" | is.na(.wk_data[[1]]$problem_clarification_819b84_complete)))
+#"Incomplete (awaiting access)"
+
+
+
+```
+
+
+```{r}
+#| label: fig-bline_recruit_wor
+#| fig-cap: "Summary of Reducing Worry recuitment (Actual vs Expected)."
+# The following groups the data by calender month and creates a cumulative count of the data.
+.cum_count <- select(randomisation, c("record_id", "randomisation_complete", "rando_dt")) %>% 
+  group_by(month = lubridate::floor_date(rando_dt, 'month')) %>% 
+  summarise(count = n()) %>% 
+  mutate(cum_count = cumsum(count)) %>% 
+  ungroup
+.cum_count <- na.omit(.cum_count)
+
+
+# Creates a new variable used to differentiate between Actual and Expected data - used in ggplot().
+.part_count <- .cum_count %>%
+  mutate(state = "Actual")
+
+# Creates a dataframe similiar to .part_count for Expected data. Data taken from Revised_actual_cumulative recruitment_v0.1.
+.start_date <- as.Date("2023/07/01")
+.exp_count <- data.frame(
+  month = seq(.start_date, by = "month", length.out = 11),
+  count = c(59,59,59,59,59,59,59,59,59,59,58)) %>%
+  mutate(cum_count = cumsum(count)) %>%
+  mutate(state = "Expected")
+
+# Combines the Actual and Expected data.
+.part_count_both <- rbind(.part_count, .exp_count)
+
+.lower = 0 # Sets lower limit for primary y axis.
+.higher = max(.part_count_both$count) + ceiling(max(.part_count_both$count)/10) # Sets upper limit for primary y axis.
+.coeff = max(.part_count_both$cum_count)/.higher # This is used to scale the secondary y axis.
+
+.int_breaks_rounded <- function(x, n = 5)  pretty(x, n)[round(pretty(x, n),1) %% 1 == 0]
+
+#Visualisation.
+ggplot(.part_count_both, aes(fill=state, y=cum_count/.coeff, x=month)) + # Selects data for the graph. Note the secondary y axis data is divided by .coeff so that it will fit the modified axis.
+  geom_bar(position="dodge", stat="identity", alpha = .5) + # Creates a column graph with both actual and expected cumulative data.
+  geom_line(aes(x = month, y = count, color = state), linewidth = 1) + # Creates a line graph with both actual and expected monthly recruitment data.
+  geom_point(aes(y=count, colour = state), size=2) + # Adds a point to each month on the line graph (this helps with readability).
+    geom_text(
+    aes(label = cum_count),
+    colour = "black", size = 1.8,
+    vjust = -1.1, position = position_dodge(25)
+    ) +
+  coord_cartesian(
+    xlim = NULL,
+    ylim = c(.lower, .higher), # Sets the primary y axis limits.
+    expand = TRUE,
+    default = FALSE,
+    clip = "on"
+  ) +
+  scale_x_date(date_labels = "%m/%Y", name = "Date") + # Sets format for dates on the x axis.
+  scale_y_continuous(.int_breaks_rounded,
+    # Features of the first axis
+    name = "Monthly Randomisation", # Sets name of primary y axis.
+    # Add a second axis and specify its features. Note that it is scaled by .coeff to fit the data modification in ggplot().
+    sec.axis = sec_axis(~.*.coeff, name="Cumulative Randomisation", breaks = .int_breaks_rounded)
+  ) + 
+  theme_minimal() + # Sets theme for the graph.
+  labs(fill = NULL, color = NULL) + # Controls settings for the legend.
+  theme(
+    legend.position="top", # Sets the position of the graph legend.
+    axis.title.x = element_text(size = 12), # Controls settings for the x axis.
+    axis.title.y = element_text(size=13), # Controls settings for the primary y axis.
+    axis.title.y.right = element_text(size=13, angle = 90) # Controls settings for the secondary y axis.
+  ) +
+  ggtitle("Monthly Randomisation Count\nin Reducing Worry")
+
+```
+
+```{r}
+#| label: tbl-bline_sites_wor
+#| tbl-cap: "Summary of Internet wor sites open."
+
+# The following creates a count of how many participants were recruited each month by site.
+.cum_count <- na.omit(merge(select(.dfs$randomisation, c("record_id", "rando_dt")),
+                    select(.dfs$contact_details, c("record_id", "cont_uni")), by = "record_id")) %>%
+  group_by(month = lubridate::floor_date(rando_dt, 'month'), cont_uni) %>%
+  summarise(count = n())
+
+# The following take a cumulative count of sites that recruited their first participant by month.
+.cum_count <- .cum_count[!duplicated(.cum_count$cont_uni), ] %>%
+  group_by(month) %>%
+  summarise(count = n()) %>%
+  mutate(cum_count = cumsum(count)) %>% 
+  ungroup
+
+# Visualisation.
+knitr::kable((select(.cum_count, c("month", "cum_count"))), col.names = c("Month", "Number of sites open") )
+
+```
+
+## Participant Demographics
+
+```{r}
+#| label: pri_out_pri_pool
+
+.pri_out <- filter(.df_wor, !is.na(.df_wor$.trialno_wor))
+
+.phq_out_table <- data.frame(time = c("PHQ-9 (Baseline)", "PHQ-9 (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c((nrow(filter(.pri_out, .pri_out$.exc1_wor == "Incomplete (Blocked)"))), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.gad_out_table <- data.frame(time = c("GAD-7 (Baseline)", "GAD-7 (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c((nrow(filter(.pri_out, .pri_out$.exc1_wor == "Incomplete (Blocked)"))), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.lidas_out_table <- data.frame(time = c("LIDAS (Baseline)", "LIDAS (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c((nrow(filter(.pri_out, .pri_out$.exc1_wor == "Incomplete (Blocked)"))), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.pri_out_table <- rbind(.phq_out_table,.gad_out_table)
+
+```
+
+```{r}
+#| label: demo_data
+#| output: false
+
+.lid_count <- group_by(.pri_out, .lidas == 1) %>%
+  summarise(count = n()) %>%
+  mutate(percent = (count/sum(count)) * 100) %>%
+  as.data.frame()
+
+.gad_count <- group_by(.pri_out, .gad7 > 9) %>%
+  summarise(count = n()) %>%
+  mutate(percent = (count/sum(count)) * 100) %>%
+  as.data.frame()
+
+.phq_count <- group_by(.pri_out, .phq9 > 9) %>%
+  summarise(count = n()) %>%
+  mutate(percent = (count/sum(count)) * 100) %>%
+  as.data.frame()
+
+.phq_count[.phq_count[1] == TRUE,][1] <- colnames(.phq_count)[1]
+.gad_count[.gad_count[1] == TRUE,][1] <- colnames(.gad_count)[1]
+.lid_count[.lid_count[1] == TRUE,][1] <- colnames(.lid_count)[1]
+
+colnames(.phq_count)[1] <- "characteristic"
+colnames(.gad_count)[1] <- "characteristic"
+colnames(.lid_count)[1] <- "characteristic"
+
+.demo_table <- rbind(.phq_count[.phq_count[1] != FALSE,], .gad_count[.gad_count[1] != FALSE,], .lid_count[.lid_count[1] != FALSE,])
+rownames(.demo_table) = NULL
+
+.gender <- make_choose_one_table(demographics$dem_gender)
+
+.sex_orient <- make_choose_one_table(demographics$dem_sex_orient)
+
+.uni_stat <- make_choose_one_table(demographics$dem_uni_status) 
+
+.uni_choice <- make_choose_one_table(contact_details$cont_uni) 
+
+.ethnic <- make_choose_all_table(demographics, "dem_ethnicity")
+
+.disability <- demographics$dem_disability_txt
+.disability[is.na(.disability)] <- demographics$dem_disability[is.na(.disability)]
+.disability[.disability == "No"] <- "No disability"
+.disability <- make_choose_one_table(.disability) 
+
+.diagnosis <- make_choose_all_table(demographics, "dem_diagnos___")
+
+.dem_list <- list(.gender, .sex_orient, .uni_stat, .uni_choice, .ethnic, .disability, .diagnosis)
+
+.col_name <- c("Response","No. of Responses","Percent (%)", "Percent not including NAs (%)")
+
+.dem_list <- lapply (.dem_list, function(x) { colnames(x)[1:length(x)] <- .col_name[1:length(x)];x})
+names(.dem_list) <- c(".gender", ".sex_orient", ".uni_stat", ".uni_choice", ".ethnic", ".disability", ".diagnosis")
+
+```
+
+```{r}
+#| label: tbl-demo_pri
+#| tbl-cap: "Summary of participants with specific criteria."
+
+knitr::kable(.demo_table, col.names = c("Score","No. of Responses","Percent (%)"), align = 'lrr', format = "html", table.attr = "style='width:30%;'")
+
+```
+
+```{r}
+#| label: tbl-demo_gender
+#| tbl-cap: "Summary of participants gender."
+
+knitr::kable(.dem_list[".gender"], align = 'lrrr', format = "html", table.attr = "style='width:30%;'")
+
+```
+
+```{r}
+#| label: tbl-demo_sex
+#| tbl-cap: "Summary of participants sexual orientation."
+
+knitr::kable(.dem_list[".sex_orient"], align = 'lrrr', format = "html", table.attr = "style='width:30%;'")
+
+```
+
+```{r}
+#| label: tbl-demo_uni_choice
+#| tbl-cap: "Summary of participants University of study."
+
+knitr::kable(.dem_list[".uni_choice"], align = 'lrrr', format = "html", table.attr = "style='width:30%;'")
+
+```
+
+```{r}
+#| label: tbl-demo_uni_stat
+#| tbl-cap: "Summary of participants University status."
+
+knitr::kable(.dem_list[".uni_stat"], align = 'lrrr', format = "html", table.attr = "style='width:30%;'")
+
+```
+
+```{r}
+#| label: tbl-demo_ethnic
+#| tbl-cap: "Summary of participants Ethnicity."
+
+knitr::kable(.dem_list[".ethnic"], align = 'lrrr', format = "html", table.attr = "style='width:30%;'")
+
+```
+
+```{r}
+#| label: tbl-demo_disability
+#| tbl-cap: "Summary of participants disability status."
+
+knitr::kable(.dem_list[".disability"], align = 'lrrr', format = "html", table.attr = "style='width:30%;'") %>%
+  kableExtra::column_spec(1, width = "10cm")
+
+```
+
+```{r}
+#| label: tbl-demo_diagnosis
+#| tbl-cap: "Summary of participants disability status (continued)."
+
+knitr::kable(.dem_list[".diagnosis"], align = 'lrrr', format = "html", table.attr = "style='width:30%;'") %>%
+  kableExtra::column_spec(1, width = "10cm")
+
+```
+
+## Data Management Progress
+
+### Number of overdue CRFs by CRF
+
+```{r}
+
+knitr::kable(.base_comp, col.names = c("CRF Name", "Number Expected", "Number Overdue"), align = "lrr")
+
+```
+
+```{r}
+knitr::kable(.wk_comp_total, col.names = c("CRF Name", "Number Expected", "Number Overdue"), align = "lrr")
+```
+
+### Primary data completeness
+
+```{r}
+#| label: tbl-pri_out_pool
+#| tbl-cap: "Summary of Primary Outcomes at various timepoints."
+
+knitr::kable(.lidas_out_table, col.names = c("Outcome (timepoint)", "Number expected", "Number overdue"))
+
+```
+
+### Secondary data completeness
+
+```{r}
+#| label: pri_out_sec_pool
+
+.brood_out_table <- data.frame(time = c("Brood (Baseline)", "Brood (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c((nrow(filter(.pri_out, .pri_out$.exc1_wor == "Incomplete (Blocked)"))), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.pswq_out_table <- data.frame(time = c("PSWQ (Baseline)", "PSWQ (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c((nrow(filter(.pri_out, .pri_out$.exc1_wor == "Incomplete (Blocked)"))), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.sec_imp_out_table <- rbind(.brood_out_table,.pswq_out_table)
+
+.wemwbs_base <- wemwbs %>%
+  filter(redcap_event_name == "Baseline") %>%
+  filter(wemwbs_complete == "Incomplete") %>%
+  select(record_id, wemwbs_complete)
+
+.wsas_base <- wsas %>%
+  filter(redcap_event_name == "Baseline") %>%
+  filter(wsas_complete == "Incomplete") %>%
+  select(record_id, wsas_complete)
+
+.use_base <- use_of_services_treatment_received_nhs %>%
+  filter(redcap_event_name == "Baseline") %>%
+  filter(use_of_services_treatment_received_nhs_complete == "Incomplete") %>%
+  select(record_id, use_of_services_treatment_received_nhs_complete)
+
+.res_base <- brief_resilience_scale %>%
+  filter(redcap_event_name == "Baseline") %>%
+  filter(brief_resilience_scale_complete == "Incomplete") %>%
+  select(record_id, brief_resilience_scale_complete)
+
+.stress_base <- perceived_stress_scale %>%
+  filter(redcap_event_name == "Baseline") %>%
+  filter(perceived_stress_scale_complete == "Incomplete") %>%
+  select(record_id, perceived_stress_scale_complete)
+
+.acad_base <- academic_grades_selfreport %>%
+  filter(redcap_event_name == "Baseline") %>%
+  filter(academic_grades_selfreport_complete == "Incomplete") %>%
+  select(record_id, academic_grades_selfreport_complete)
+
+colnames(.pri_out)[14] <- "record_id"
+
+.pri_out <- merge(.pri_out, .wemwbs_base, by = "record_id", all = TRUE) %>%
+  merge(.wsas_base, by = "record_id", all = TRUE) %>%
+  merge(.use_base, by = "record_id", all = TRUE) %>%
+  merge(.res_base, by = "record_id", all = TRUE) %>%
+  merge(.stress_base, by = "record_id", all = TRUE) %>%
+  merge(.acad_base, by = "record_id", all = TRUE)
+
+.wemwbs_no <- .pri_out %>%
+  filter(wemwbs_complete == "Incomplete") %>%
+  filter(.exc1_wor == "Incomplete (Blocked)") %>%
+  nrow()
+
+.wsas_no <- .pri_out %>%
+  filter(wsas_complete == "Incomplete") %>%
+  filter(.exc1_wor == "Incomplete (Blocked)") %>%
+  nrow()
+
+.use_no <- .pri_out %>%
+  filter(use_of_services_treatment_received_nhs_complete == "Incomplete") %>%
+  filter(.exc1_wor == "Incomplete (Blocked)") %>%
+  nrow()
+
+.res_no <- .pri_out %>%
+  filter(brief_resilience_scale_complete == "Incomplete") %>%
+  filter(.exc1_wor == "Incomplete (Blocked)") %>%
+  nrow()
+
+.stress_no <- .pri_out %>%
+  filter(perceived_stress_scale_complete == "Incomplete") %>%
+  filter(.exc1_wor == "Incomplete (Blocked)") %>%
+  nrow()
+
+.acad_no <- .pri_out %>%
+  filter(academic_grades_selfreport_complete == "Incomplete") %>%
+  filter(.exc1_wor == "Incomplete (Blocked)") %>%
+  nrow()
+
+.wemwbs_out_table <- data.frame(time = c("WEMWBS (Baseline)", "WEMWBS (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c(.wemwbs_no, nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.wsas_out_table <- data.frame(time = c("WSAS (Baseline)", "WSAS (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c(.wsas_no, nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.use_out_table <- data.frame(time = c("Use of Services (Baseline)", "Use of Services (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c(.use_no, nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.res_out_table <- data.frame(time = c("Resiliance (Baseline)", "Resiliance (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c(.res_no, nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.stress_out_table <- data.frame(time = c("Stress (Baseline)", "Stress (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c(.stress_no, nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+.acad_out_table <- data.frame(time = c("Academic Outcomes (Baseline)", "Academic Outcomes (3 Month FU)"),
+                             num_exp = c(nrow(.pri_out), nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")) + nrow(filter(.pri_out, !is.na(.pri_out$.induc3_wor)))),
+                             num_over = c(.acad_no, nrow(filter(.pri_out, .pri_out$.exc3_wor == "Incomplete (overdue)")))
+                             )
+
+.sec_out_table <- rbind(.pri_out_table, .sec_imp_out_table, .wemwbs_out_table, .wsas_out_table, .use_out_table, .res_out_table, .stress_out_table, .acad_out_table)
+
+
+```
+
+```{r}
+#| label: tbl-pri_out_sec_pool
+#| tbl-cap: "Summary of Secondary Outcomes at various timepoints."
+
+knitr::kable(.sec_out_table, col.names = c("Outcome (timepoint)", "Number expected", "Number overdue"))
+# outcome (timepoint), number expected, number overdue
+```
+
+## Follow Up
+
+### Participants being successfully followed up.
+
+### Withdrawals
+
+```{r}
+#| label: with_checker
+
+# Prints the number of withdrawals.
+.any_with <- ifelse(exists('withdrawal') == TRUE, sprintf("There have been %s withdrawals during this trial", nrow(filter(withdrawal, withdrawal_complete == "Complete"))), "There have been no withdrawals in this trial")
+print(.any_with)
+
+```
+
+```{r}
+#| label: tbl-withdrawal
+#| tbl-cap: "Summary of Reducing Worry withdrawals."
+
+.with_list <- as.data.frame(matrix(ncol = 5, nrow = 0))
+if(exists('withdrawal') == TRUE){.with_list <- select(filter(withdrawal, withdrawal_complete == "Complete"), "with_rum_ch_dt", "with_rum_type", "with_rum_timepoint", "with_rum_reason", "record_id")}
+colnames(.with_list) <- c("Date of Status Change", "Withdrawal type", "Withdrawal timepoint", "Reason for withdrawal", "Record ID")
+
+knitr::kable(.with_list)
+
+```
+
+## Safety
+
+### AEs
+
+```{r}
+#| label: ae_checker
+
+# Prints the number of AEs.
+.any_ae <- ifelse(exists('ae') == TRUE, sprintf("There have been %s AEs during this trial", nrow(filter(ae, ae_complete == "Complete"))), "There have been no AEs in this trial")
+print(.any_ae)
+
+```
+
+```{r}
+#| label: tbl-ae
+#| tbl-cap: "Summary of Adverse Events."
+
+.ae_list <- as.data.frame(matrix(ncol = 4, nrow = 0))
+if(exists('ae') == TRUE){.ae_list <- select(filter(ae, ae_complete == "Complete"), "ae_rum_number", "ae_rum_event_name", "ae_rum_start_dt", "ae_rum_relation")}
+colnames(.ae_list) <- c("AE Number", "AE Event Name", "AE Start Date", "Relationship to Trial")
+
+knitr::kable(.ae_list)
+
+```
+
+### SAEs
+
+```{r}
+#| label: sae_checker
+
+# Prints the number of SAEs.
+.any_sae <- ifelse(exists('sae') == TRUE, sprintf("There have been %s SAEs during this trial", nrow(filter(sae, sae_complete == "Complete"))), "There have been no SAEs in this trial")
+print(.any_sae)
+
+```
+
+```{r}
+#| label: tbl-sae
+#| tbl-cap: "Summary of Severe Adverse Events."
+
+.sae_list <- as.data.frame(matrix(ncol = 4, nrow = 0))
+if(exists('sae') == TRUE){.sae_list <- select(filter(sae, sae_complete == "Complete"), "sae_rum_number", "sae_rum_event_name", "sae_rum_start_dt", "sae_rum_relation")}
+colnames(.sae_list) <- c("SAE Number", "SAE Event Name", "SAE Start Date", "Relationship to Trial")
+
+knitr::kable(.sae_list)
+
+```
