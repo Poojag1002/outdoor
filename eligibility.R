@@ -7,7 +7,7 @@ print(my_string)
 
 library(httr)
 library(jsonlite)
-token <- "D53E4D05D75354D5E9E324999672561A"
+token <- "Token"
 url <- "https://rc.ctu.exeter.ac.uk/api/"
 formData <- list("token"=token,
                  content='report',
