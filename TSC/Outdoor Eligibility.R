@@ -8,7 +8,7 @@ rm(list = ls()) # Ensures workspace is clear before starting.
 
 # Imports data from REDCap using API (Re-run this section to refresh the data).
 tidyREDCap::import_instruments("https://rc.ctu.exeter.ac.uk/api/",
-  'D53E4D05D75354D5E9E324999672561A', 
+  'Token', 
   record_id = "screening_id1",
   first_record_id = "OSCR_001",
   drop_blank = FALSE )
