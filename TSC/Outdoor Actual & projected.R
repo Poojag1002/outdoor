@@ -8,7 +8,7 @@ rm(list = ls()) # Ensures workspace is clear before starting.
 
 tidyREDCap::import_instruments(
   "https://rc.ctu.exeter.ac.uk/api/",
-  "A53DC565170091392FF2A444108EDC4A",
+  "Token",
   record_id = "record_id", 
   first_record_id = "NOR-8_(OSCR_043)",
   drop_blank = FALSE
